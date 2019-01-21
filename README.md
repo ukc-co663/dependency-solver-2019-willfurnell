@@ -1,2 +1,2 @@
-# depsolver-StartJava
-Scaffolding for Java projects
+# Will's Dependency Solver
+TODO: the whole thing
