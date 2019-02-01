@@ -1,2 +1,2 @@
 # Will's Dependency Solver
-TODO: the whole thing
+TODO: graphing, check state
