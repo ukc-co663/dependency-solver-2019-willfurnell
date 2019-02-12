@@ -121,7 +121,7 @@ conn.commit()
 
 c.execute("SELECT * FROM packages")
 
-print(c.fetchall())
+#print(c.fetchall())
 
 for p in repository:
     c.execute("SELECT id FROM packages WHERE name = ? and version = ?", [p['name'], p['version']])
@@ -133,7 +133,7 @@ for p in repository:
             else:
                 must_be_installed = 0
             for dep in dlist:
-                print(parse_vstring(dep))
+ #               print(parse_vstring(dep))
                 package_name, package_version, package_req = parse_vstring(dep)
                 if package_req is not None and package_version is not None:
                     c.execute("SELECT * FROM packages WHERE name = ?", [package_name])
@@ -167,7 +167,7 @@ for p in repository:
 conn.commit()
 
 c.execute("SELECT * FROM depends")
-print(c.fetchall())
+#print(c.fetchall())
 
 def add_dep_to_installs(package_id):
     c.execute("SELECT * FROM depends WHERE package_id = ?", [package_id])
@@ -193,21 +193,21 @@ G = nx.DiGraph()
 installs, uninstalls = parse_constraints(constraints)
 
 for i in installs:
-    print(i)
+#    print(i)
     add_dep_to_installs(i)
     add_conflict_to_uninstalls(i)
 
-print(uninstalls)
+#print(uninstalls)
 
 install_order = []
 for n in nx.algorithms.dag.lexicographical_topological_sort(G.reverse()):
     c.execute("SELECT name, version FROM packages WHERE id = ?", [n])
     res = c.fetchone()
-    install_order.append(res[0] + "=" + res[1])
+    install_order.append("+" + res[0] + "=" + res[1])
 
-print(install_order)
+print(json.dumps(install_order))
 
-nx.draw(G, with_labels=True)
-plt.draw()
-plt.show()
+#nx.draw(G, with_labels=True)
+#plt.draw()
+#plt.show()
 
