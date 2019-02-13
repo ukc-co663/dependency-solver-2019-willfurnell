@@ -1,10 +1,10 @@
 import argparse
 import json
 import networkx as nx
-import matplotlib.pyplot as plt
 import sqlite3
 from operator import *
 from packaging import version
+import MySQLdb
 
 parser = argparse.ArgumentParser(description='Solve dependencies')
 parser.add_argument('repo', metavar='r', type=str)
@@ -22,12 +22,17 @@ with open(args.initial, 'r') as initial_file:
 with open(args.constraints, 'r') as constraints_file:
     constraints = json.load(constraints_file)
 
-conn = sqlite3.connect(':memory:') # create database in memory
+conn = MySQLdb.connect(host="dragon.kent.ac.uk",    # your host, usually localhost
+                     user="wf44",         # your username
+                     passwd="lsar/az",  # your password
+                     db="wf44")        # name of the data base
+
+#conn = sqlite3.connect(':memory:') # create database in memory
 
 package_db = \
 '''
 CREATE TABLE packages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id INTEGER PRIMARY KEY AUTO_INCREMENT,
     name VARCHAR(2147483647),
     version VARCHAR(2147483647),
     size INTEGER
@@ -81,6 +86,10 @@ def parse_vstring(version_string):
         return (version_string.split("<=")[0], version_string.split("<=")[1], le)
     elif "=" in version_string:
         return (version_string.split("=")[0], version_string.split("=")[1], eq)
+    elif "<" in version_string:
+        return (version_string.split("<")[0], version_string.split("<")[1], lt)
+    elif ">" in version_string:
+        return (version_string.split(">")[0], version_string.split(">")[1], gt)
     else:
         return version_string, None, None
 
@@ -119,10 +128,7 @@ for p in repository:
 
 conn.commit()
 
-c.execute("SELECT * FROM packages")
-
-#print(c.fetchall())
-
+counter2 = 0
 for p in repository:
     c.execute("SELECT id FROM packages WHERE name = ? and version = ?", [p['name'], p['version']])
     id = c.fetchone()[0]
@@ -133,21 +139,31 @@ for p in repository:
             else:
                 must_be_installed = 0
             for dep in dlist:
- #               print(parse_vstring(dep))
+                #print(dep)
+                #print(parse_vstring(dep))
                 package_name, package_version, package_req = parse_vstring(dep)
                 if package_req is not None and package_version is not None:
                     c.execute("SELECT * FROM packages WHERE name = ?", [package_name])
                     packages = c.fetchall()
-                    packages_rightversion = filter(lambda x: package_req(version.parse(x[2]), version.parse(package_version)), packages)
-                    depid = sorted(packages_rightversion, key=lambda x: version.parse(x[2]))[0][0]
-                    c.execute("INSERT INTO depends(package_id, depend_package_id, must_be_installed) VALUES (?, ?, ?)", [id, depid, must_be_installed])
-                    conn.commit()
+                    if packages != []:
+                        packages_rightversion = filter(lambda x: package_req(version.parse(x[2]), version.parse(package_version)), packages)
+                        l = list(packages_rightversion)
+                        if len(l) > 0:
+                            depid = sorted(l, key=lambda x: version.parse(x[2]))[0][0]
+                            try:
+                                c.execute("INSERT INTO depends(package_id, depend_package_id, must_be_installed) VALUES (?, ?, ?)", [id, depid, must_be_installed])
+                            except sqlite3.IntegrityError:
+                                pass
                 else:
                     c.execute("SELECT * FROM packages WHERE name = ?", [package_name])
                     packages = c.fetchall()
-                    depid = sorted(packages, key=lambda x: version.parse(x[2]))[0][0]
-                    c.execute("INSERT INTO depends(package_id, depend_package_id, must_be_installed) VALUES (?, ?, ?)", [id, depid, must_be_installed])
-                    conn.commit()
+                    if packages != []:
+                        # We didn't find ANY packages in the repo with this name! That means that we should probably just ignore this dependency is even a thing
+                        depid = sorted(packages, key=lambda x: version.parse(x[2]))[0][0]
+                        try:
+                            c.execute("INSERT INTO depends(package_id, depend_package_id, must_be_installed) VALUES (?, ?, ?)", [id, depid, must_be_installed])
+                        except sqlite3.IntegrityError:
+                            pass
     conn.commit()
     if 'conflicts' in p.keys():
         for conflict in p['conflicts']:
@@ -157,17 +173,22 @@ for p in repository:
                 cons = c.fetchall()
                 for con in cons:
                     if package_req(version.parse(con[2]), version.parse(package_version)):
-                        c.execute("INSERT INTO conflicts(package_id, conflict_package_id) VALUES (?, ?)", [id, con[0]])
+                        try:
+                            c.execute("INSERT INTO conflicts(package_id, conflict_package_id) VALUES (?, ?)", [id, con[0]])
+                        except sqlite3.IntegrityError:
+                            pass
             else:
                 c.execute("SELECT id FROM packages WHERE name = ?", [package_name])
                 cons = c.fetchall()
                 for con in cons:
-                    c.execute("INSERT INTO conflicts(package_id, conflict_package_id) VALUES (?, ?)", [id, con[0]])
+                    try:
+                        c.execute("INSERT INTO conflicts(package_id, conflict_package_id) VALUES (?, ?)", [id, con[0]])
+                    except sqlite3.IntegrityError:
+                        pass
     conn.commit()
+    counter2 += 1
+    print(str(counter2) + " of " + str(len(repository)))
 conn.commit()
-
-c.execute("SELECT * FROM depends")
-#print(c.fetchall())
 
 def add_dep_to_installs(package_id):
     c.execute("SELECT * FROM depends WHERE package_id = ?", [package_id])
@@ -193,21 +214,18 @@ G = nx.DiGraph()
 installs, uninstalls = parse_constraints(constraints)
 
 for i in installs:
-#    print(i)
     add_dep_to_installs(i)
     add_conflict_to_uninstalls(i)
 
-#print(uninstalls)
-
 install_order = []
+
+for n in uninstalls:
+    print(n)
+
 for n in nx.algorithms.dag.lexicographical_topological_sort(G.reverse()):
     c.execute("SELECT name, version FROM packages WHERE id = ?", [n])
     res = c.fetchone()
     install_order.append("+" + res[0] + "=" + res[1])
 
 print(json.dumps(install_order))
-
-#nx.draw(G, with_labels=True)
-#plt.draw()
-#plt.show()
 
