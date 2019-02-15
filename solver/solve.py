@@ -4,6 +4,7 @@ import networkx as nx
 from operator import *
 from packaging import version
 import pymysql.cursors
+import matplotlib.pyplot as plt
 
 parser = argparse.ArgumentParser(description='Solve dependencies')
 parser.add_argument('repo', metavar='r', type=str)
@@ -68,7 +69,8 @@ state_db = \
 """
 CREATE TABLE state (
     package_id INTEGER,
-    PRIMARY KEY (package_id) REFERENCES packages(id)
+    PRIMARY KEY (package_id), 
+    FOREIGN KEY (package_id) REFERENCES packages(id)
 )
 """
 
@@ -85,6 +87,7 @@ c.execute(set_for_key_check)
 c.execute(package_db)
 c.execute(conflicts_db)
 c.execute(depends_db)
+c.execute(state_db)
 
 conn.commit()
 
@@ -202,13 +205,22 @@ conn.commit()
 
 
 def add_dep_to_installs(package_id):
+    #TODO: We can get circular dependencies here
+    # At this stage we need to check for optional dependencies, and if we have a circular graph, then remove one of the
+    # optional dependencies, to get rid of the circle
+
+    # ALSO IF NO DEPENDENCIES, STILL ADD TO INSTALLS!
     c.execute("SELECT depend_package_id FROM depends WHERE package_id = %s", [package_id])
     tmp = c.fetchall() # Only get ID
     dependencies = []
-    for d in tmp:
-        G.add_edge(package_id, d['depend_package_id'])
-        if d['depend_package_id'] not in installs:
-            dependencies.append(d['depend_package_id'])
+    if len(tmp) != 0:
+        for d in tmp:
+            G.add_edge(package_id, d['depend_package_id'])
+            if d['depend_package_id'] not in installs:
+                dependencies.append(d['depend_package_id'])
+    else:
+        # We don't have any dependencies, don't need to add to graph, just install whenever
+        installs_no_deps.append(package_id)
     installs.extend(dependencies)
     map(lambda x: add_dep_to_installs(x), dependencies)
 
@@ -220,12 +232,25 @@ def add_conflict_to_uninstalls(package_id):
     for con in tmp:
         if con['conflict_package_id'] not in conflicts:
             conflicts.append(con['conflict_package_id'])
-    installs.extend(conflicts)
-    map(lambda x: add_dep_to_installs(x), conflicts)
+    uninstalls.extend(conflicts)
+    map(lambda x: add_conflict_to_uninstalls(x), conflicts)
 
 G = nx.DiGraph()
 
 installs, uninstalls = parse_constraints(constraints)
+installs_no_deps = []
+
+for i in initial:
+    if "=" in i:
+        name, version = i.split("=")
+        c.execute("SELECT id FROM packages WHERE name = %s and version = %s", [name, version])
+        res = c.fetchone()
+        c.execute("INSERT INTO state(package_id) VALUES(%s)", [res['id']])
+    else:
+        c.execute("SELECT id, version FROM packages WHERE name = %s", [i])
+        ps = c.fetchall()
+        pid = sorted(ps, key=lambda x: version.parse(x['version']))[0]['id']
+        c.execute("INSERT INTO state(package_id) VALUES(%s)", [pid])
 
 for i in installs:
     add_dep_to_installs(i)
@@ -234,9 +259,17 @@ for i in installs:
 install_order = []
 
 for n in uninstalls:
-    print(n)
+    c.execute("SELECT name, version FROM packages, state WHERE id = %s AND package_id = %s", [n, n])
+    res = c.fetchone()
+    if res:
+        install_order.append("-" + res['name'] + "=" + res['version'])
 
 for n in nx.algorithms.dag.lexicographical_topological_sort(G.reverse()):
+    c.execute("SELECT name, version FROM packages WHERE id = %s", [n])
+    res = c.fetchone()
+    install_order.append("+" + res['name'] + "=" + res['version'])
+
+for n in installs_no_deps:
     c.execute("SELECT name, version FROM packages WHERE id = %s", [n])
     res = c.fetchone()
     install_order.append("+" + res['name'] + "=" + res['version'])
