@@ -234,7 +234,7 @@ def add_dep_to_installs(package_id):
     if len(tmp) != 0:
         for d in tmp:
             G.add_edge(package_id, d['depend_package_id'])
-            if d['depend_package_id'] not in installs:
+            if d['depend_package_id'] not in installs and d['depend_package_id'] not in dependencies:
                 dependencies.append(d['depend_package_id'])
     else:
         # We don't have any dependencies, don't need to add to graph, just install whenever
@@ -283,14 +283,19 @@ for n in uninstalls:
         install_order.append("-" + res['name'] + "=" + res['version'])
 
 for n in nx.algorithms.dag.lexicographical_topological_sort(G.reverse()):
-    c.execute("SELECT name, version FROM packages WHERE id = %s", [n])
+    # Check if we've already installed this package:
+    c.execute("SELECT package_id FROM state WHERE package_id = %s", [n])
     res = c.fetchone()
-    install_order.append("+" + res['name'] + "=" + res['version'])
+    if not res:
+        c.execute("SELECT name, version FROM packages WHERE id = %s", [n])
+        res = c.fetchone()
+        install_order.append("+" + res['name'] + "=" + res['version'])
 
 for n in installs_no_deps:
     c.execute("SELECT name, version FROM packages WHERE id = %s", [n])
     res = c.fetchone()
-    install_order.append("+" + res['name'] + "=" + res['version'])
+    if n not in list(G.nodes):
+        install_order.append("+" + res['name'] + "=" + res['version'])
 
 print(json.dumps(install_order))
 
