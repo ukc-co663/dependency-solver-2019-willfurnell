@@ -276,7 +276,7 @@ for i in installs:
 
 install_order = []
 
-for n in uninstalls:
+for n in set(uninstalls):
     c.execute("SELECT name, version FROM packages, state WHERE id = %s AND package_id = %s", [n, n])
     res = c.fetchone()
     if res:
@@ -286,7 +286,7 @@ for n in nx.algorithms.dag.lexicographical_topological_sort(G.reverse()):
     # Check if we've already installed this package:
     c.execute("SELECT package_id FROM state WHERE package_id = %s", [n])
     res = c.fetchone()
-    if not res:
+    if not res and n not in uninstalls:
         c.execute("SELECT name, version FROM packages WHERE id = %s", [n])
         res = c.fetchone()
         install_order.append("+" + res['name'] + "=" + res['version'])
@@ -294,7 +294,7 @@ for n in nx.algorithms.dag.lexicographical_topological_sort(G.reverse()):
 for n in installs_no_deps:
     c.execute("SELECT name, version FROM packages WHERE id = %s", [n])
     res = c.fetchone()
-    if n not in list(G.nodes):
+    if n not in list(G.nodes) and n not in uninstalls:
         install_order.append("+" + res['name'] + "=" + res['version'])
 
 print(json.dumps(install_order))
