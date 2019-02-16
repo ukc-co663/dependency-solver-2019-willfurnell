@@ -6,6 +6,12 @@ from packaging import version
 import pymysql.cursors
 import matplotlib.pyplot as plt
 
+no_sql_notes = "SET sql_notes = 0"
+cdbc = pymysql.connect(host='localhost', user='root', password='')
+cdbc.cursor().execute(no_sql_notes)
+cdbc.cursor().execute("CREATE DATABASE IF NOT EXISTS depsolve")
+cdbc.commit()
+
 parser = argparse.ArgumentParser(description='Solve dependencies')
 parser.add_argument('repo', metavar='r', type=str)
 parser.add_argument('initial', metavar='i', type=str)
@@ -75,7 +81,6 @@ CREATE TABLE state (
 """
 
 unset_for_key_check = "SET foreign_key_checks = 0"
-no_sql_notes = "SET sql_notes = 0"
 set_for_key_check = "SET foreign_key_checks = 1"
 del_pkg = "DROP TABLE IF EXISTS packages, conflicts, depends, state"
 
@@ -200,7 +205,7 @@ for p in repository:
                         pass
     conn.commit()
     counter2 += 1
-    print(str(counter2) + " of " + str(len(repository)))
+    #print(str(counter2) + " of " + str(len(repository)))
 conn.commit()
 
 
