@@ -233,8 +233,8 @@ def add_dep_to_installs(package_id):
     dependencies = []
     if len(tmp) != 0:
         for d in tmp:
-            G.add_edge(package_id, d['depend_package_id'])
             if d['depend_package_id'] not in installs and d['depend_package_id'] not in dependencies:
+                G.add_edge(package_id, d['depend_package_id'])
                 dependencies.append(d['depend_package_id'])
     else:
         # We don't have any dependencies, don't need to add to graph, just install whenever
@@ -281,6 +281,8 @@ for n in set(uninstalls):
     res = c.fetchone()
     if res:
         install_order.append("-" + res['name'] + "=" + res['version'])
+
+#print(nx.algorithms.find_cycle(G))
 
 for n in nx.algorithms.dag.lexicographical_topological_sort(G.reverse()):
     # Check if we've already installed this package:
