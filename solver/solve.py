@@ -5,9 +5,13 @@ from operator import *
 from packaging import version
 import pymysql.cursors
 import matplotlib.pyplot as plt
+import sys
 
 no_sql_notes = "SET sql_notes = 0"
-cdbc = pymysql.connect(host='localhost', user='root', password='')
+if sys.platform == "darwin":
+    cdbc = pymysql.connect(host='localhost', user='root', password='')
+else:
+    cdbc = pymysql.connect(unix_socket='/var/run/mysqld/mysqld.sock', user='root', password='')
 cdbc.cursor().execute(no_sql_notes)
 cdbc.cursor().execute("CREATE DATABASE IF NOT EXISTS depsolve")
 cdbc.commit()
@@ -28,8 +32,17 @@ with open(args.initial, 'r') as initial_file:
 with open(args.constraints, 'r') as constraints_file:
     constraints = json.load(constraints_file)
 
-# Connect to the database
-conn = pymysql.connect(host='localhost',
+if sys.platform == "darwin":
+    # Connect to the database
+    conn = pymysql.connect(host='localhost',
+                             user='root',
+                             password='',
+                             db='depsolve',
+                             charset='utf8mb4',
+                             cursorclass=pymysql.cursors.DictCursor)
+else:
+    # Connect to the database
+    conn = pymysql.connect(unix_socket='/var/run/mysqld/mysqld.sock',
                              user='root',
                              password='',
                              db='depsolve',
