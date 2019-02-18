@@ -2,7 +2,7 @@ import argparse
 import json
 import networkx as nx
 from operator import *
-from packaging import version
+from packaging import version as vparser
 import pymysql.cursors
 import matplotlib.pyplot as plt
 import sys
@@ -53,10 +53,6 @@ def make_conn():
                              cursorclass=pymysql.cursors.DictCursor)
     return conn
 
-conn = make_conn()
-
-#conn = sqlite3.connect(':memory:') # create database in memory
-
 package_db = \
 '''
 CREATE TABLE packages (
@@ -106,17 +102,6 @@ unset_for_key_check = "SET foreign_key_checks = 0"
 set_for_key_check = "SET foreign_key_checks = 1"
 del_pkg = "DROP TABLE IF EXISTS packages, conflicts, depends, state"
 
-c = conn.cursor()
-c.execute(no_sql_notes)
-c.execute(unset_for_key_check)
-c.execute(del_pkg)
-c.execute(set_for_key_check)
-c.execute(package_db)
-c.execute(conflicts_db)
-c.execute(depends_db)
-c.execute(state_db)
-
-conn.commit()
 
 def parse_vstring(version_string):
     if ">=" in version_string:
@@ -160,22 +145,11 @@ def parse_constraints(constraints):
 
     return installs, uninstalls
 
-#repo_index = 1
-for p in repository:
-    # Index repo packages by name and version
-    c.execute("INSERT INTO packages(name, version, weight, depends, conflicts) VALUES (%s, %s, %s, %s, %s)", [p['name'], p['version'], p['size'], json.dumps(p['depends']) if 'depends' in p.keys() else "[]", json.dumps(p['conflicts']) if 'conflicts' in p.keys() else "[]"])
-    #c.execute("SELECT LAST_INSERT_ID()")
-    #res = c.fetchone()
-    #repository[repo_index]['id'] = res['LAST_INSERT_ID()']
-    #repo_index += 1
-
-conn.commit()
 
 def add_deps(pid):
-    conn = make_conn()
-    c = conn.cursor()
     c.execute("SELECT depends FROM packages WHERE id = %s", [pid])
     depends = c.fetchone()
+    depends = json.loads(depends['depends'])
     if len(depends) > 0:
         opt_dep_group = 0
         for dlist in depends:
@@ -184,17 +158,15 @@ def add_deps(pid):
             else:
                 must_be_installed = 0
             for dep in dlist:
-                #print(dep)
-                #print(parse_vstring(dep))
                 package_name, package_version, package_req = parse_vstring(dep)
                 if package_req is not None and package_version is not None:
                     c.execute("SELECT id, version FROM packages WHERE name = %s", [package_name])
                     packages = c.fetchall()
                     if len(packages) != 0:
-                        packages_rightversion = filter(lambda x: package_req(version.parse(x['version']), version.parse(package_version)), packages)
+                        packages_rightversion = filter(lambda x: package_req(vparser.parse(x['version']), vparser.parse(package_version)), packages)
                         l = list(packages_rightversion)
                         if len(l) > 0:
-                            depid = sorted(l, key=lambda x: version.parse(x['version']))[0]['id']
+                            depid = sorted(l, key=lambda x: vparser.parse(x['version']))[0]['id']
                             try:
                                 c.execute("INSERT INTO depends(package_id, depend_package_id, must_be_installed, opt_dep_group) VALUES (%s, %s, %s, %s)", [pid, depid, must_be_installed, opt_dep_group])
                             except pymysql.IntegrityError:
@@ -204,7 +176,7 @@ def add_deps(pid):
                     packages = c.fetchall()
                     if len(packages) != 0:
                         # We didn't find ANY packages in the repo with this name! That means that we should probably just ignore this dependency is even a thing
-                        depid = sorted(packages, key=lambda x: version.parse(x['version']))[0]['id']
+                        depid = sorted(packages, key=lambda x: vparser.parse(x['version']))[0]['id']
                         try:
                             c.execute("INSERT INTO depends(package_id, depend_package_id, must_be_installed, opt_dep_group) VALUES (%s, %s, %s, %s)", [pid, depid, must_be_installed, opt_dep_group])
                         except pymysql.IntegrityError:
@@ -214,10 +186,9 @@ def add_deps(pid):
 
 
 def add_conflicts(pid):
-    conn = make_conn()
-    c = conn.cursor()
     c.execute("SELECT conflicts FROM packages WHERE id = %s", [pid])
     conflicts = c.fetchone()
+    conflicts = json.loads(conflicts['conflicts'])
     if len(conflicts) > 0:
         for conflict in conflicts:
             package_name, package_version, package_req = parse_vstring(conflict)
@@ -225,7 +196,7 @@ def add_conflicts(pid):
                 c.execute("SELECT id, version FROM packages WHERE name = %s", [package_name])
                 cons = c.fetchall()
                 for con in cons:
-                    if package_req(version.parse(con['version']), version.parse(package_version)):
+                    if package_req(vparser.parse(con['version']), vparser.parse(package_version)):
                         try:
                             c.execute("INSERT INTO conflicts(package_id, conflict_package_id) VALUES (%s, %s)", [pid, con['id']])
                         except pymysql.IntegrityError:
@@ -238,12 +209,7 @@ def add_conflicts(pid):
                         c.execute("INSERT INTO conflicts(package_id, conflict_package_id) VALUES (%s, %s)", [pid, con['id']])
                     except pymysql.IntegrityError:
                         pass
-
-#p = Pool(10)
-#p.map(add_deps_and_conflicts, repository)
-
-
-#conn.commit()
+    conn.commit()
 
 
 def add_dep_to_installs(package_id):
@@ -251,6 +217,7 @@ def add_dep_to_installs(package_id):
     # At this stage we need to check for optional dependencies, and if we have a circular graph, then remove one of the
     # optional dependencies, to get rid of the circle
     add_deps(package_id)
+    add_conflicts(package_id)
     # ALSO IF NO DEPENDENCIES, STILL ADD TO INSTALLS!
     check_in = "AND package_id NOT IN (" + ", ".join(map(str, uninstalls)) + ")" if len(uninstalls) > 0 else ""
     c.execute("SELECT depend_package_id, opt_dep_group, weight FROM depends, packages WHERE package_id = %s AND packages.id = %s " + check_in + "ORDER BY weight ASC", [package_id, package_id])
@@ -272,6 +239,7 @@ def add_dep_to_installs(package_id):
 
 
 def add_conflict_to_uninstalls(package_id):
+    add_deps(package_id)
     add_conflicts(package_id)
     c.execute("SELECT conflict_package_id FROM conflicts WHERE package_id = %s", [package_id])
     tmp = c.fetchall()
@@ -281,6 +249,27 @@ def add_conflict_to_uninstalls(package_id):
             conflicts.append(con['conflict_package_id'])
     uninstalls.extend(conflicts)
     map(lambda x: add_conflict_to_uninstalls(x), conflicts)
+
+
+conn = make_conn()
+
+c = conn.cursor()
+c.execute(no_sql_notes)
+c.execute(unset_for_key_check)
+c.execute(del_pkg)
+c.execute(set_for_key_check)
+c.execute(package_db)
+c.execute(conflicts_db)
+c.execute(depends_db)
+c.execute(state_db)
+
+conn.commit()
+
+for p in repository:
+    # Index repo packages by name and version
+    c.execute("INSERT INTO packages(name, version, weight, depends, conflicts) VALUES (%s, %s, %s, %s, %s)", [p['name'], p['version'], p['size'], json.dumps(p['depends']) if 'depends' in p.keys() else "[]", json.dumps(p['conflicts']) if 'conflicts' in p.keys() else "[]"])
+
+conn.commit()
 
 G = nx.DiGraph()
 
@@ -299,13 +288,13 @@ for i in initial:
         pid = sorted(ps, key=lambda x: version.parse(x['version']))[0]['id']
         c.execute("INSERT INTO state(package_id) VALUES(%s)", [pid])
 
+conn.commit()
+
 for i in installs:
     add_conflict_to_uninstalls(i)
 
 for i in installs:
     add_dep_to_installs(i)
-
-for i in installs:
     add_conflict_to_uninstalls(i)
 
 install_order = []
@@ -315,13 +304,6 @@ for n in set(uninstalls):
     res = c.fetchone()
     if res:
         install_order.append("-" + res['name'] + "=" + res['version'])
-
-#print(nx.algorithms.find_cycle(G))
-#print(uninstalls)
-#print(installs_no_deps)
-#print(installs)
-#nx.draw(G, with_labels=True)
-#plt.show()
 
 for n in nx.algorithms.dag.lexicographical_topological_sort(G.reverse()):
     # Check if we've already installed this package:
