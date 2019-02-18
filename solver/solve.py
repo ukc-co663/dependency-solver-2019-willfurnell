@@ -231,7 +231,8 @@ def add_dep_to_installs(package_id):
     # optional dependencies, to get rid of the circle
 
     # ALSO IF NO DEPENDENCIES, STILL ADD TO INSTALLS!
-    c.execute("SELECT depend_package_id, opt_dep_group, weight FROM depends, packages WHERE package_id = %s AND packages.id = %s ORDER BY weight ASC", [package_id, package_id])
+    check_in = "AND package_id NOT IN (" + ", ".join(map(str, uninstalls)) + ")" if len(uninstalls) > 0 else ""
+    c.execute("SELECT depend_package_id, opt_dep_group, weight FROM depends, packages WHERE package_id = %s AND packages.id = %s " + check_in + "ORDER BY weight ASC", [package_id, package_id])
     tmp = c.fetchall() # Only get ID
     dependencies = []
     if len(tmp) != 0:
@@ -277,7 +278,12 @@ for i in initial:
         c.execute("INSERT INTO state(package_id) VALUES(%s)", [pid])
 
 for i in installs:
+    add_conflict_to_uninstalls(i)
+
+for i in installs:
     add_dep_to_installs(i)
+
+for i in installs:
     add_conflict_to_uninstalls(i)
 
 install_order = []
@@ -289,9 +295,9 @@ for n in set(uninstalls):
         install_order.append("-" + res['name'] + "=" + res['version'])
 
 #print(nx.algorithms.find_cycle(G))
-
-nx.draw(G)
-plt.show()
+#print(uninstalls)
+#nx.draw(G, with_labels=True)
+#plt.show()
 
 for n in nx.algorithms.dag.lexicographical_topological_sort(G.reverse()):
     # Check if we've already installed this package:
