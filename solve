@@ -1,2 +1,2 @@
 #!/bin/bash
-python3 -m cProfile -o prof_output solver/solve.py $@
+python3 solver/solve.py $@

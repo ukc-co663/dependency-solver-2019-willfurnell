@@ -6,6 +6,7 @@ from packaging import version
 import pymysql.cursors
 import matplotlib.pyplot as plt
 import sys
+from multiprocessing import Pool
 
 no_sql_notes = "SET sql_notes = 0"
 if sys.platform == "darwin":
@@ -32,22 +33,27 @@ with open(args.initial, 'r') as initial_file:
 with open(args.constraints, 'r') as constraints_file:
     constraints = json.load(constraints_file)
 
-if sys.platform == "darwin":
-    # Connect to the database
-    conn = pymysql.connect(host='localhost',
+
+def make_conn():
+    if sys.platform == "darwin":
+        # Connect to the database
+        conn = pymysql.connect(host='localhost',
                              user='root',
                              password='',
                              db='depsolve',
                              charset='utf8mb4',
                              cursorclass=pymysql.cursors.DictCursor)
-else:
-    # Connect to the database
-    conn = pymysql.connect(unix_socket='/var/run/mysqld/mysqld.sock',
+    else:
+        # Connect to the database
+        conn = pymysql.connect(unix_socket='/var/run/mysqld/mysqld.sock',
                              user='root',
                              password='',
                              db='depsolve',
                              charset='utf8mb4',
                              cursorclass=pymysql.cursors.DictCursor)
+    return conn
+
+conn = make_conn()
 
 #conn = sqlite3.connect(':memory:') # create database in memory
 
@@ -57,7 +63,9 @@ CREATE TABLE packages (
     id INTEGER PRIMARY KEY AUTO_INCREMENT,
     name VARCHAR(255),
     version VARCHAR(255),
-    weight INTEGER
+    weight INTEGER,
+    depends TEXT,
+    conflicts TEXT
 );
 '''
 
@@ -110,7 +118,6 @@ c.execute(state_db)
 
 conn.commit()
 
-
 def parse_vstring(version_string):
     if ">=" in version_string:
         return (version_string.split(">=")[0], version_string.split(">=")[1], ge)
@@ -153,20 +160,25 @@ def parse_constraints(constraints):
 
     return installs, uninstalls
 
-
+#repo_index = 1
 for p in repository:
     # Index repo packages by name and version
-    c.execute("INSERT INTO packages(name, version, weight) VALUES (%s, %s, %s)", [p['name'], p['version'], p['size']])
+    c.execute("INSERT INTO packages(name, version, weight, depends, conflicts) VALUES (%s, %s, %s, %s, %s)", [p['name'], p['version'], p['size'], json.dumps(p['depends']) if 'depends' in p.keys() else "[]", json.dumps(p['conflicts']) if 'conflicts' in p.keys() else "[]"])
+    #c.execute("SELECT LAST_INSERT_ID()")
+    #res = c.fetchone()
+    #repository[repo_index]['id'] = res['LAST_INSERT_ID()']
+    #repo_index += 1
 
 conn.commit()
 
-counter2 = 0
-for p in repository:
-    c.execute("SELECT id FROM packages WHERE name = %s and version = %s", [p['name'], p['version']])
-    pid = c.fetchone()['id']
-    if 'depends' in p.keys():
+def add_deps(pid):
+    conn = make_conn()
+    c = conn.cursor()
+    c.execute("SELECT depends FROM packages WHERE id = %s", [pid])
+    depends = c.fetchone()
+    if len(depends) > 0:
         opt_dep_group = 0
-        for dlist in p['depends']:
+        for dlist in depends:
             if len(dlist) == 1:
                 must_be_installed = 1
             else:
@@ -199,8 +211,15 @@ for p in repository:
                             pass
             opt_dep_group += 1
     conn.commit()
-    if 'conflicts' in p.keys():
-        for conflict in p['conflicts']:
+
+
+def add_conflicts(pid):
+    conn = make_conn()
+    c = conn.cursor()
+    c.execute("SELECT conflicts FROM packages WHERE id = %s", [pid])
+    conflicts = c.fetchone()
+    if len(conflicts) > 0:
+        for conflict in conflicts:
             package_name, package_version, package_req = parse_vstring(conflict)
             if package_req is not None and package_version is not None:
                 c.execute("SELECT id, version FROM packages WHERE name = %s", [package_name])
@@ -219,17 +238,19 @@ for p in repository:
                         c.execute("INSERT INTO conflicts(package_id, conflict_package_id) VALUES (%s, %s)", [pid, con['id']])
                     except pymysql.IntegrityError:
                         pass
-    conn.commit()
-    counter2 += 1
-    #print(str(counter2) + " of " + str(len(repository)))
-conn.commit()
+
+#p = Pool(10)
+#p.map(add_deps_and_conflicts, repository)
+
+
+#conn.commit()
 
 
 def add_dep_to_installs(package_id):
     #TODO: We can get circular dependencies here
     # At this stage we need to check for optional dependencies, and if we have a circular graph, then remove one of the
     # optional dependencies, to get rid of the circle
-
+    add_deps(package_id)
     # ALSO IF NO DEPENDENCIES, STILL ADD TO INSTALLS!
     check_in = "AND package_id NOT IN (" + ", ".join(map(str, uninstalls)) + ")" if len(uninstalls) > 0 else ""
     c.execute("SELECT depend_package_id, opt_dep_group, weight FROM depends, packages WHERE package_id = %s AND packages.id = %s " + check_in + "ORDER BY weight ASC", [package_id, package_id])
@@ -251,6 +272,7 @@ def add_dep_to_installs(package_id):
 
 
 def add_conflict_to_uninstalls(package_id):
+    add_conflicts(package_id)
     c.execute("SELECT conflict_package_id FROM conflicts WHERE package_id = %s", [package_id])
     tmp = c.fetchall()
     conflicts = []
@@ -296,6 +318,8 @@ for n in set(uninstalls):
 
 #print(nx.algorithms.find_cycle(G))
 #print(uninstalls)
+#print(installs_no_deps)
+#print(installs)
 #nx.draw(G, with_labels=True)
 #plt.show()
 
