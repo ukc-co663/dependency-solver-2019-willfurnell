@@ -57,7 +57,7 @@ CREATE TABLE packages (
     id INTEGER PRIMARY KEY AUTO_INCREMENT,
     name VARCHAR(255),
     version VARCHAR(255),
-    size INTEGER
+    weight INTEGER
 );
 '''
 
@@ -78,6 +78,7 @@ CREATE TABLE depends (
     package_id INTEGER,
     depend_package_id INTEGER,
     must_be_installed INTEGER,
+    opt_dep_group INTEGER,
     PRIMARY KEY (package_id, depend_package_id),
     FOREIGN KEY (package_id) REFERENCES packages(id),
     FOREIGN KEY (depend_package_id) REFERENCES packages(id)
@@ -155,7 +156,7 @@ def parse_constraints(constraints):
 
 for p in repository:
     # Index repo packages by name and version
-    c.execute("INSERT INTO packages(name, version, size) VALUES (%s, %s, %s)", [p['name'], p['version'], p['size']])
+    c.execute("INSERT INTO packages(name, version, weight) VALUES (%s, %s, %s)", [p['name'], p['version'], p['size']])
 
 conn.commit()
 
@@ -164,6 +165,7 @@ for p in repository:
     c.execute("SELECT id FROM packages WHERE name = %s and version = %s", [p['name'], p['version']])
     pid = c.fetchone()['id']
     if 'depends' in p.keys():
+        opt_dep_group = 0
         for dlist in p['depends']:
             if len(dlist) == 1:
                 must_be_installed = 1
@@ -182,7 +184,7 @@ for p in repository:
                         if len(l) > 0:
                             depid = sorted(l, key=lambda x: version.parse(x['version']))[0]['id']
                             try:
-                                c.execute("INSERT INTO depends(package_id, depend_package_id, must_be_installed) VALUES (%s, %s, %s)", [pid, depid, must_be_installed])
+                                c.execute("INSERT INTO depends(package_id, depend_package_id, must_be_installed, opt_dep_group) VALUES (%s, %s, %s, %s)", [pid, depid, must_be_installed, opt_dep_group])
                             except pymysql.IntegrityError:
                                 pass
                 else:
@@ -192,9 +194,10 @@ for p in repository:
                         # We didn't find ANY packages in the repo with this name! That means that we should probably just ignore this dependency is even a thing
                         depid = sorted(packages, key=lambda x: version.parse(x['version']))[0]['id']
                         try:
-                            c.execute("INSERT INTO depends(package_id, depend_package_id, must_be_installed) VALUES (%s, %s, %s)", [pid, depid, must_be_installed])
+                            c.execute("INSERT INTO depends(package_id, depend_package_id, must_be_installed, opt_dep_group) VALUES (%s, %s, %s, %s)", [pid, depid, must_be_installed, opt_dep_group])
                         except pymysql.IntegrityError:
                             pass
+            opt_dep_group += 1
     conn.commit()
     if 'conflicts' in p.keys():
         for conflict in p['conflicts']:
@@ -228,15 +231,17 @@ def add_dep_to_installs(package_id):
     # optional dependencies, to get rid of the circle
 
     # ALSO IF NO DEPENDENCIES, STILL ADD TO INSTALLS!
-    c.execute("SELECT depend_package_id FROM depends WHERE package_id = %s", [package_id])
+    c.execute("SELECT depend_package_id, opt_dep_group, weight FROM depends, packages WHERE package_id = %s AND packages.id = %s ORDER BY weight ASC", [package_id, package_id])
     tmp = c.fetchall() # Only get ID
     dependencies = []
     if len(tmp) != 0:
+        prev_opt_dep_group = None
         for d in tmp:
-            G.add_edge(package_id, d['depend_package_id'])
-            if d['depend_package_id'] not in installs and d['depend_package_id'] not in dependencies:
-
-                dependencies.append(d['depend_package_id'])
+            if d['opt_dep_group'] != prev_opt_dep_group:
+                G.add_edge(package_id, d['depend_package_id'])
+                if d['depend_package_id'] not in installs and d['depend_package_id'] not in dependencies:
+                    dependencies.append(d['depend_package_id'])
+                prev_opt_dep_group = d['opt_dep_group']
     else:
         # We don't have any dependencies, don't need to add to graph, just install whenever
         installs_no_deps.append(package_id)
@@ -284,6 +289,9 @@ for n in set(uninstalls):
         install_order.append("-" + res['name'] + "=" + res['version'])
 
 #print(nx.algorithms.find_cycle(G))
+
+nx.draw(G)
+plt.show()
 
 for n in nx.algorithms.dag.lexicographical_topological_sort(G.reverse()):
     # Check if we've already installed this package:
