@@ -233,8 +233,10 @@ def add_dep_to_installs(package_id):
     dependencies = []
     if len(tmp) != 0:
         for d in tmp:
-            if d['depend_package_id'] not in installs and d['depend_package_id'] not in dependencies:
+            if package_id not in installs_no_deps and package_id not in installs:
                 G.add_edge(package_id, d['depend_package_id'])
+            if d['depend_package_id'] not in installs and d['depend_package_id'] not in dependencies:
+
                 dependencies.append(d['depend_package_id'])
     else:
         # We don't have any dependencies, don't need to add to graph, just install whenever
