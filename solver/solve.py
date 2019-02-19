@@ -213,14 +213,10 @@ def add_conflicts(pid):
 
 
 def add_dep_to_installs(package_id):
-    #TODO: We can get circular dependencies here
-    # At this stage we need to check for optional dependencies, and if we have a circular graph, then remove one of the
-    # optional dependencies, to get rid of the circle
     add_deps(package_id)
     add_conflicts(package_id)
-    # ALSO IF NO DEPENDENCIES, STILL ADD TO INSTALLS!
     check_in = "AND package_id NOT IN (" + ", ".join(map(str, uninstalls)) + ")" if len(uninstalls) > 0 else ""
-    c.execute("SELECT depend_package_id, opt_dep_group, weight FROM depends, packages WHERE package_id = %s AND packages.id = %s " + check_in + "ORDER BY weight ASC", [package_id, package_id])
+    c.execute("SELECT depend_package_id, opt_dep_group, weight FROM depends, packages WHERE package_id = %s AND packages.id = %s " + check_in + " ORDER BY weight ASC", [package_id, package_id])
     tmp = c.fetchall() # Only get ID
     dependencies = []
     if len(tmp) != 0:
@@ -304,6 +300,12 @@ for n in set(uninstalls):
     res = c.fetchone()
     if res:
         install_order.append("-" + res['name'] + "=" + res['version'])
+
+try:
+    cycles = nx.algorithms.find_cycle(G)
+    G.remove_edge(cycles[0][0], cycles[0][1])
+except:
+    pass
 
 for n in nx.algorithms.dag.lexicographical_topological_sort(G.reverse()):
     # Check if we've already installed this package:
