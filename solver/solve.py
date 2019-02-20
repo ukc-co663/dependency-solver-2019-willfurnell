@@ -6,7 +6,6 @@ from packaging import version as vparser
 import pymysql.cursors
 import matplotlib.pyplot as plt
 import sys
-from multiprocessing import Pool
 
 no_sql_notes = "SET sql_notes = 0"
 if sys.platform == "darwin":
@@ -301,11 +300,7 @@ for n in set(uninstalls):
     if res:
         install_order.append("-" + res['name'] + "=" + res['version'])
 
-try:
-    cycles = nx.algorithms.find_cycle(G)
-    G.remove_edge(cycles[0][0], cycles[0][1])
-except:
-    pass
+G.remove_edges_from(G.selfloop_edges())
 
 for n in nx.algorithms.dag.lexicographical_topological_sort(G.reverse()):
     # Check if we've already installed this package:

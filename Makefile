@@ -5,7 +5,6 @@ compile: deps
 
 deps:
 	./install_deps.sh
-	touch deps
 
 test: compile
 	./run_tests.sh
