@@ -215,7 +215,8 @@ def add_dep_to_installs(package_id):
     add_deps(package_id)
     add_conflicts(package_id)
     check_in = "AND package_id NOT IN (" + ", ".join(map(str, uninstalls)) + ")" if len(uninstalls) > 0 else ""
-    c.execute("SELECT depend_package_id, opt_dep_group, weight FROM depends, packages WHERE package_id = %s AND packages.id = %s " + check_in + " ORDER BY weight ASC", [package_id, package_id])
+    check_in_2 = "AND depend_package_id NOT IN (" + ", ".join(map(str, installs)) + ")" if len(installs) > 0 else ""
+    c.execute("SELECT depend_package_id, opt_dep_group, weight FROM depends, packages WHERE package_id = %s AND packages.id = %s " + check_in + check_in_2 + " ORDER BY weight ASC", [package_id, package_id])
     tmp = c.fetchall() # Only get ID
     dependencies = []
     if len(tmp) != 0:
