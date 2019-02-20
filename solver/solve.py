@@ -299,8 +299,10 @@ for n in set(uninstalls):
     res = c.fetchone()
     if res:
         install_order.append("-" + res['name'] + "=" + res['version'])
-
-G.remove_edges_from(G.selfloop_edges())
+try:
+    G.remove_edges_from(nx.algorithms.simple_cycles(G))
+except nx.NetworkXNoCycle:
+    pass
 
 for n in nx.algorithms.dag.lexicographical_topological_sort(G.reverse()):
     # Check if we've already installed this package:
