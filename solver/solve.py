@@ -225,18 +225,12 @@ def add_dep_to_installs(package_id):
         prev_opt_dep_group = None
         for d in tmp:
             if d['opt_dep_group'] != prev_opt_dep_group:
-            #if d['depend_package_id'] not in installs:
-                try:
-                    if not nx.has_path(G, package_id, d['depend_package_id']):
-                        G.add_edge(package_id, d['depend_package_id'])
-                        if d['depend_package_id'] not in installs and d['depend_package_id'] not in dependencies:
-                            dependencies.append(d['depend_package_id'])
-                        prev_opt_dep_group = d['opt_dep_group']
-                except nx.NodeNotFound:
-                    G.add_edge(package_id, d['depend_package_id'])
-                    if d['depend_package_id'] not in installs and d['depend_package_id'] not in dependencies:
-                        dependencies.append(d['depend_package_id'])
-                    prev_opt_dep_group = d['opt_dep_group']
+                G.add_edge(package_id, d['depend_package_id'])
+                if nx.algorithms.simple_cycles(G):
+                    G.remove_edge(package_id, d['depend_package_id'])
+                elif d['depend_package_id'] not in installs and d['depend_package_id'] not in dependencies:
+                    dependencies.append(d['depend_package_id'])
+                prev_opt_dep_group = d['opt_dep_group']
     else:
         # We don't have any dependencies, don't need to add to graph, just install whenever
         installs_no_deps.append(package_id)
