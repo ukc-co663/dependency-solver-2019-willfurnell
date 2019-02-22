@@ -219,16 +219,24 @@ def add_dep_to_installs(package_id):
     check_in_2 = ""
     c.execute("SELECT depend_package_id, opt_dep_group, weight FROM depends, packages WHERE package_id = %s AND packages.id = %s " + check_in + check_in_2 + " ORDER BY weight ASC", [package_id, package_id])
     tmp = c.fetchall() # Only get ID
+    opt_dep_groups = map(lambda x: x['opt_dep_group'], tmp)
     dependencies = []
     if len(tmp) != 0:
         prev_opt_dep_group = None
         for d in tmp:
-            #if d['opt_dep_group'] != prev_opt_dep_group:
-            if d['depend_package_id'] not in installs:
-                G.add_edge(package_id, d['depend_package_id'])
-                if d['depend_package_id'] not in installs and d['depend_package_id'] not in dependencies:
-                    dependencies.append(d['depend_package_id'])
-                prev_opt_dep_group = d['opt_dep_group']
+            if d['opt_dep_group'] != prev_opt_dep_group:
+            #if d['depend_package_id'] not in installs:
+                try:
+                    if not nx.has_path(G, package_id, d['depend_package_id']):
+                        G.add_edge(package_id, d['depend_package_id'])
+                        if d['depend_package_id'] not in installs and d['depend_package_id'] not in dependencies:
+                            dependencies.append(d['depend_package_id'])
+                        prev_opt_dep_group = d['opt_dep_group']
+                except nx.NodeNotFound:
+                    G.add_edge(package_id, d['depend_package_id'])
+                    if d['depend_package_id'] not in installs and d['depend_package_id'] not in dependencies:
+                        dependencies.append(d['depend_package_id'])
+                    prev_opt_dep_group = d['opt_dep_group']
     else:
         # We don't have any dependencies, don't need to add to graph, just install whenever
         installs_no_deps.append(package_id)
@@ -302,10 +310,10 @@ for n in set(uninstalls):
     res = c.fetchone()
     if res:
         install_order.append("-" + res['name'] + "=" + res['version'])
-try:
-    G.remove_edges_from(nx.algorithms.simple_cycles(G))
-except nx.NetworkXNoCycle:
-    pass
+#try:
+#    G.remove_edges_from(nx.algorithms.simple_cycles(G))
+#except nx.NetworkXNoCycle:
+#    pass
 
 for n in nx.algorithms.dag.topological_sort(G.reverse()):
     # Check if we've already installed this package:
