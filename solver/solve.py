@@ -226,9 +226,7 @@ def add_dep_to_installs(package_id):
         for d in tmp:
             if d['opt_dep_group'] != prev_opt_dep_group:
                 G.add_edge(package_id, d['depend_package_id'])
-                if nx.algorithms.simple_cycles(G):
-                    G.remove_edge(package_id, d['depend_package_id'])
-                elif d['depend_package_id'] not in installs and d['depend_package_id'] not in dependencies:
+                if d['depend_package_id'] not in installs and d['depend_package_id'] not in dependencies:
                     dependencies.append(d['depend_package_id'])
                 prev_opt_dep_group = d['opt_dep_group']
     else:
