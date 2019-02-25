@@ -304,11 +304,6 @@ for i in installs:
 
 install_order = []
 
-for n in set(uninstalls):
-    c.execute("SELECT name, version FROM packages, state WHERE id = %s AND package_id = %s", [n, n])
-    res = c.fetchone()
-    if res:
-        install_order.append("-" + res['name'] + "=" + res['version'])
 
 expression = Cnf()
 var_groups = {}
@@ -329,6 +324,7 @@ solver = Minisat()
 
 solution = solver.solve(expression)
 packages_to_install = []
+packages_to_uninstall = []
 
 if solution.error != False:
     print("Error:")
@@ -337,11 +333,24 @@ elif solution.success:
     for var in solution.varmap.keys():
         if solution[var] is True:
             packages_to_install.append(var.name)
+        else:
+            packages_to_uninstall.append(var.name)
 else:
     print("The expression cannot be satisfied")
-#nx.algorithms.dag.topological_sort(G.reverse())
+#
+G_copy = G.copy()
 
-for n in packages_to_install:
+for node in G_copy.nodes:
+    if node not in packages_to_install:
+        G.remove_node(node)
+
+for n in set(uninstalls):
+    c.execute("SELECT name, version FROM packages, state WHERE id = %s AND package_id = %s", [n, n])
+    res = c.fetchone()
+    if res:
+        install_order.append("-" + res['name'] + "=" + res['version'])
+
+for n in nx.algorithms.dag.topological_sort(G.reverse()):
     # Check if we've already installed this package:
     c.execute("SELECT package_id FROM state WHERE package_id = %s", [n])
     res = c.fetchone()
