@@ -344,6 +344,12 @@ for node in G_copy.nodes:
     if node not in packages_to_install:
         G.remove_node(node)
 
+G.remove_edges_from(nx.algorithms.simple_cycles(G))
+
+
+#nx.draw(G)
+#plt.show()
+
 for n in set(uninstalls):
     c.execute("SELECT name, version FROM packages, state WHERE id = %s AND package_id = %s", [n, n])
     res = c.fetchone()
