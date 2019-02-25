@@ -226,9 +226,10 @@ def add_dep_to_installs(package_id):
     if len(tmp) != 0:
         prev_opt_dep_group = None
         for d in tmp:
+            add_conflict_to_uninstalls(d['depend_package_id'])
             #if d['opt_dep_group'] != prev_opt_dep_group:
             G.add_node(d['depend_package_id'], opt_dep_group=d['opt_dep_group'], required=d['must_be_installed'],
-                       weight=d['weight'])
+                       weight=d['weight'], conflict=False)
             G.add_edge(package_id, d['depend_package_id'])
             if d['depend_package_id'] not in installs and d['depend_package_id'] not in dependencies:
                 dependencies.append(d['depend_package_id'])
@@ -242,12 +243,13 @@ def add_dep_to_installs(package_id):
 
 
 def add_conflict_to_uninstalls(package_id):
-    add_deps(package_id)
     add_conflicts(package_id)
     c.execute("SELECT conflict_package_id FROM conflicts WHERE package_id = %s", [package_id])
     tmp = c.fetchall()
     conflicts = []
     for con in tmp:
+        G.add_node(con['conflict_package_id'], conflict=True)
+        G.add_edge(package_id, con['conflict_package_id'])
         if con['conflict_package_id'] not in conflicts:
             conflicts.append(con['conflict_package_id'])
     uninstalls.extend(conflicts)
@@ -296,11 +298,7 @@ for i in initial:
 conn.commit()
 
 for i in installs:
-    add_conflict_to_uninstalls(i)
-
-for i in installs:
     add_dep_to_installs(i)
-    add_conflict_to_uninstalls(i)
 
 install_order = []
 
@@ -308,7 +306,9 @@ install_order = []
 expression = Cnf()
 var_groups = {}
 for n in G.nodes(data=True):
-    if 'opt_dep_group' not in n[1].keys() or ('required' in n[1].keys() and n[1]['required'] is 1):
+    if 'conflict' in n[1].keys() and n[1]['conflict'] is True:
+        expression &= Variable(n[0], True)
+    elif 'opt_dep_group' not in n[1].keys() or ('required' in n[1].keys() and n[1]['required'] is 1):
         expression &= Variable(n[0])
     else:
         if n[1]['opt_dep_group'] in var_groups.keys():
@@ -341,10 +341,8 @@ else:
 G_copy = G.copy()
 
 for node in G_copy.nodes:
-    if node not in packages_to_install:
+    if node not in packages_to_install and node not in uninstalls:
         G.remove_node(node)
-
-G.remove_edges_from(nx.algorithms.simple_cycles(G))
 
 
 #nx.draw(G)
@@ -364,6 +362,10 @@ for n in nx.algorithms.dag.topological_sort(G.reverse()):
         c.execute("SELECT name, version FROM packages WHERE id = %s", [n])
         res = c.fetchone()
         install_order.append("+" + res['name'] + "=" + res['version'])
+    elif not res and n in uninstalls:
+        c.execute("SELECT name, version FROM packages WHERE id = %s", [n])
+        res = c.fetchone()
+        install_order.append("-" + res['name'] + "=" + res['version'])
 
 for n in installs_no_deps:
     c.execute("SELECT name, version FROM packages WHERE id = %s", [n])
