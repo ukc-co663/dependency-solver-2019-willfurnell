@@ -236,7 +236,7 @@ def add_dep_to_installs(package_id):
                 #prev_opt_dep_group = d['opt_dep_group']
     else:
         # We don't have any dependencies, don't need to add to graph, just install whenever
-        G.add_node(package_id, required=1, opt_dep_group=-1)
+        G.add_node(package_id, required=1, opt_dep_group=-1, conflict=False)
         installs_no_deps.append(package_id)
     installs.extend(dependencies)
     map(lambda x: add_dep_to_installs(x), dependencies)
@@ -282,7 +282,10 @@ G = nx.DiGraph()
 
 installs, uninstalls = parse_constraints(constraints)
 installs_no_deps = []
+install_order = []
+install_order_ids = []
 
+# Setup the state
 for i in initial:
     if "=" in i:
         name, version = i.split("=")
@@ -295,14 +298,22 @@ for i in initial:
         pid = sorted(ps, key=lambda x: version.parse(x['version']))[0]['id']
         c.execute("INSERT INTO state(package_id) VALUES(%s)", [pid])
 
+# Uninstalls from constraints
+for n in set(uninstalls):
+    c.execute("SELECT name, version FROM packages, state WHERE id = %s AND package_id = %s", [n, n])
+    res = c.fetchone()
+    if res:
+        install_order.append("-" + res['name'] + "=" + res['version'])
+        install_order_ids.append(n)
+
 conn.commit()
 
+# Do everything basically
 for i in installs:
     add_dep_to_installs(i)
 
-install_order = []
 
-
+# Build a CNF formula based on our graph
 expression = Cnf()
 var_groups = {}
 for n in G.nodes(data=True):
@@ -340,19 +351,13 @@ else:
 #
 G_copy = G.copy()
 
-for node in G_copy.nodes:
-    if node not in packages_to_install and node not in uninstalls:
-        G.remove_node(node)
+for node in G_copy.nodes(data=True):
+    if node[0] not in packages_to_install and node[0] not in uninstalls:
+        G.remove_node(node[0])
 
 
 #nx.draw(G)
 #plt.show()
-
-for n in set(uninstalls):
-    c.execute("SELECT name, version FROM packages, state WHERE id = %s AND package_id = %s", [n, n])
-    res = c.fetchone()
-    if res:
-        install_order.append("-" + res['name'] + "=" + res['version'])
 
 for n in nx.algorithms.dag.topological_sort(G.reverse()):
     # Check if we've already installed this package:
@@ -362,16 +367,19 @@ for n in nx.algorithms.dag.topological_sort(G.reverse()):
         c.execute("SELECT name, version FROM packages WHERE id = %s", [n])
         res = c.fetchone()
         install_order.append("+" + res['name'] + "=" + res['version'])
-    elif not res and n in uninstalls:
+        install_order_ids.append(n)
+    elif not res and n in uninstalls and n in install_order_ids:
         c.execute("SELECT name, version FROM packages WHERE id = %s", [n])
         res = c.fetchone()
         install_order.append("-" + res['name'] + "=" + res['version'])
+        install_order_ids.append(n)
 
 for n in installs_no_deps:
     c.execute("SELECT name, version FROM packages WHERE id = %s", [n])
     res = c.fetchone()
     if n not in list(G.nodes) and n not in uninstalls:
         install_order.append("+" + res['name'] + "=" + res['version'])
+        install_order_ids.append(n)
 
 print(json.dumps(install_order))
 
