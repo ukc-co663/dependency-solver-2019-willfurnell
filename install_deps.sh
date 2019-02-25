@@ -5,5 +5,6 @@
 apt update
 apt install python3-pip -y
 apt install mariadb-server mariadb-client -y
+apt install minisat -y
 service mysql start
-pip3 install --user networkx packaging matplotlib pymysql
+pip3 install --user networkx packaging matplotlib pymysql satispy

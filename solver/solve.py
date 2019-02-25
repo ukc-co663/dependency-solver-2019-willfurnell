@@ -6,6 +6,8 @@ from packaging import version as vparser
 import pymysql.cursors
 import matplotlib.pyplot as plt
 import sys
+from satispy import Variable, Cnf
+from satispy.solver import Minisat
 
 no_sql_notes = "SET sql_notes = 0"
 if sys.platform == "darwin":
@@ -101,6 +103,7 @@ unset_for_key_check = "SET foreign_key_checks = 0"
 set_for_key_check = "SET foreign_key_checks = 1"
 del_pkg = "DROP TABLE IF EXISTS packages, conflicts, depends, state"
 
+opt_dep_group = 0
 
 def parse_vstring(version_string):
     if ">=" in version_string:
@@ -144,13 +147,12 @@ def parse_constraints(constraints):
 
     return installs, uninstalls
 
-
 def add_deps(pid):
+    global opt_dep_group
     c.execute("SELECT depends FROM packages WHERE id = %s", [pid])
     depends = c.fetchone()
     depends = json.loads(depends['depends'])
     if len(depends) > 0:
-        opt_dep_group = 0
         for dlist in depends:
             if len(dlist) == 1:
                 must_be_installed = 1
@@ -217,20 +219,23 @@ def add_dep_to_installs(package_id):
     check_in = "AND package_id NOT IN (" + ", ".join(map(str, uninstalls)) + ")" if len(uninstalls) > 0 else ""
     #check_in_2 = "AND depend_package_id NOT IN (" + ", ".join(map(str, installs)) + ")" if len(installs) > 0 else ""
     check_in_2 = ""
-    c.execute("SELECT depend_package_id, opt_dep_group, weight FROM depends, packages WHERE package_id = %s AND packages.id = %s " + check_in + check_in_2 + " ORDER BY weight ASC", [package_id, package_id])
+    c.execute("SELECT depend_package_id, opt_dep_group, weight, must_be_installed, weight FROM depends, packages WHERE package_id = %s AND packages.id = %s " + check_in + check_in_2 + " ORDER BY weight ASC", [package_id, package_id])
     tmp = c.fetchall() # Only get ID
     opt_dep_groups = map(lambda x: x['opt_dep_group'], tmp)
     dependencies = []
     if len(tmp) != 0:
         prev_opt_dep_group = None
         for d in tmp:
-            if d['opt_dep_group'] != prev_opt_dep_group:
-                G.add_edge(package_id, d['depend_package_id'])
-                if d['depend_package_id'] not in installs and d['depend_package_id'] not in dependencies:
-                    dependencies.append(d['depend_package_id'])
-                prev_opt_dep_group = d['opt_dep_group']
+            #if d['opt_dep_group'] != prev_opt_dep_group:
+            G.add_node(d['depend_package_id'], opt_dep_group=d['opt_dep_group'], required=d['must_be_installed'],
+                       weight=d['weight'])
+            G.add_edge(package_id, d['depend_package_id'])
+            if d['depend_package_id'] not in installs and d['depend_package_id'] not in dependencies:
+                dependencies.append(d['depend_package_id'])
+                #prev_opt_dep_group = d['opt_dep_group']
     else:
         # We don't have any dependencies, don't need to add to graph, just install whenever
+        G.add_node(package_id, required=1, opt_dep_group=-1)
         installs_no_deps.append(package_id)
     installs.extend(dependencies)
     map(lambda x: add_dep_to_installs(x), dependencies)
@@ -247,6 +252,8 @@ def add_conflict_to_uninstalls(package_id):
             conflicts.append(con['conflict_package_id'])
     uninstalls.extend(conflicts)
     map(lambda x: add_conflict_to_uninstalls(x), conflicts)
+
+#def check_if_package_deps_are_
 
 
 conn = make_conn()
@@ -302,12 +309,39 @@ for n in set(uninstalls):
     res = c.fetchone()
     if res:
         install_order.append("-" + res['name'] + "=" + res['version'])
-#try:
-#    G.remove_edges_from(nx.algorithms.simple_cycles(G))
-#except nx.NetworkXNoCycle:
-#    pass
 
-for n in nx.algorithms.dag.topological_sort(G.reverse()):
+expression = Cnf()
+var_groups = {}
+for n in G.nodes(data=True):
+    if 'opt_dep_group' not in n[1].keys() or ('required' in n[1].keys() and n[1]['required'] is 1):
+        expression &= Variable(n[0])
+    else:
+        if n[1]['opt_dep_group'] in var_groups.keys():
+            var_groups[n[1]['opt_dep_group']] |= Variable(n[0])
+        else:
+            var_groups[n[1]['opt_dep_group']] = Cnf()
+            var_groups[n[1]['opt_dep_group']] |= Variable(n[0])
+
+for var_group in var_groups:
+    expression &= var_groups[var_group]
+
+solver = Minisat()
+
+solution = solver.solve(expression)
+packages_to_install = []
+
+if solution.error != False:
+    print("Error:")
+    print(solution.error)
+elif solution.success:
+    for var in solution.varmap.keys():
+        if solution[var] is True:
+            packages_to_install.append(var.name)
+else:
+    print("The expression cannot be satisfied")
+#nx.algorithms.dag.topological_sort(G.reverse())
+
+for n in packages_to_install:
     # Check if we've already installed this package:
     c.execute("SELECT package_id FROM state WHERE package_id = %s", [n])
     res = c.fetchone()
