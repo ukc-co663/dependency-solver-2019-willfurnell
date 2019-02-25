@@ -284,6 +284,7 @@ installs, uninstalls = parse_constraints(constraints)
 installs_no_deps = []
 install_order = []
 install_order_ids = []
+state = []
 
 # Setup the state
 for i in initial:
@@ -292,11 +293,13 @@ for i in initial:
         c.execute("SELECT id FROM packages WHERE name = %s and version = %s", [name, version])
         res = c.fetchone()
         c.execute("INSERT INTO state(package_id) VALUES(%s)", [res['id']])
+        state.append(res['id'])
     else:
         c.execute("SELECT id, version FROM packages WHERE name = %s", [i])
         ps = c.fetchall()
         pid = sorted(ps, key=lambda x: version.parse(x['version']))[0]['id']
         c.execute("INSERT INTO state(package_id) VALUES(%s)", [pid])
+        state.append(pid)
 
 # Uninstalls from constraints
 for n in set(uninstalls):
@@ -352,7 +355,7 @@ else:
 G_copy = G.copy()
 
 for node in G_copy.nodes(data=True):
-    if node[0] not in packages_to_install and node[0] not in uninstalls:
+    if node[0] not in packages_to_install and node[0] not in packages_to_uninstall:
         G.remove_node(node[0])
 
 
@@ -368,7 +371,7 @@ for n in nx.algorithms.dag.topological_sort(G.reverse()):
         res = c.fetchone()
         install_order.append("+" + res['name'] + "=" + res['version'])
         install_order_ids.append(n)
-    elif not res and n in uninstalls and n in install_order_ids:
+    elif res or n in install_order_ids:
         c.execute("SELECT name, version FROM packages WHERE id = %s", [n])
         res = c.fetchone()
         install_order.append("-" + res['name'] + "=" + res['version'])
