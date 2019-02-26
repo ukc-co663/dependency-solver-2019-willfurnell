@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import sys
 from satispy import Variable, Cnf
 from satispy.solver import Minisat
+import time
 
 no_sql_notes = "SET sql_notes = 0"
 if sys.platform == "darwin":
@@ -33,6 +34,11 @@ with open(args.initial, 'r') as initial_file:
 
 with open(args.constraints, 'r') as constraints_file:
     constraints = json.load(constraints_file)
+
+if len(constraints) == 0:
+    print(json.dumps([]))
+    exit(0)
+
 
 
 def make_conn():
@@ -345,6 +351,7 @@ if solution.error != False:
     print(solution.error)
 elif solution.success:
     for var in solution.varmap.keys():
+        #print(str(var.name) + " " + str(solution[var]))
         if solution[var] is True:
             packages_to_install.append(var.name)
         else:
@@ -385,6 +392,9 @@ for n in installs_no_deps:
         install_order_ids.append(n)
 
 print(json.dumps(install_order))
+
+
+#time.sleep(50000)
 
 c.execute(unset_for_key_check)
 c.execute(del_pkg)
