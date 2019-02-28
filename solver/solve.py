@@ -337,23 +337,30 @@ for i in installs:
 
 solver = Solver()
 
+var_mapping = {}
 var_groups = {}
 trues = []
 ands = []
 #print(G.nodes(data=True))
 for n in G.nodes(data=True):
     if 'conflict' in n[1].keys() and n[1]['conflict'] is True:
-        solver.add(Not(Bool(n[0])))
+        v = Bool(n[0])
+        solver.add(Not(v))
+        var_mapping[n[0]] = v
     elif 'opt_dep_group' not in n[1].keys() or ('required' in n[1].keys() and n[1]['required'] is 1):
-        solver.add(Bool(n[0]))
+        solver.add(True)
         trues.append(n[0])
     else:
         #print("got here")
         if n[1]['opt_dep_group'] in var_groups.keys():
-            var_groups[n[1]['opt_dep_group']].append(Bool(n[0]))
+            v = Bool(n[0])
+            var_groups[n[1]['opt_dep_group']].append(v)
+            var_mapping[n[0]] = v
         else:
             var_groups[n[1]['opt_dep_group']] = []
-            var_groups[n[1]['opt_dep_group']].append(Bool(n[0]))
+            v = Bool(n[0])
+            var_groups[n[1]['opt_dep_group']].append(v)
+            var_mapping[n[0]] = v
 
 ors = []
 for var_group in var_groups:
@@ -377,6 +384,7 @@ elif r == unknown:
     exit(0)
 
 m = solver.model()
+#print(m)
 
 packages_to_install = []
 packages_to_uninstall = []
@@ -385,10 +393,13 @@ packages_to_install.extend(trues)
 
 G_copy = G.copy()
 
-for node in G_copy.nodes(data=True):
-    if node[0] not in trues and not m[Bool(node[0])]:
-        G.remove_node(node[0])
+#print(var_mapping)
+#print(trues)
 
+for node in G_copy.nodes():
+    if node not in trues and not m[var_mapping[node]]:
+        #print("Node: " + str(node) + " being removed")
+        G.remove_node(node)
 
 #nx.draw(G, with_labels=True)
 #plt.show()
@@ -405,7 +416,7 @@ state_ids = map(lambda x: x['package_id'], res)
 #        install_order_ids.append(n)
 
 for n in nx.algorithms.dag.topological_sort(G.reverse()):
-    if n in packages_to_install and n not in all_conflicts:
+    if n in packages_to_install or n not in all_conflicts:
         c.execute("SELECT name, version FROM packages WHERE id = %s", [n])
         res = c.fetchone()
         install_order.append("+" + res['name'] + "=" + res['version'])
