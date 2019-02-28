@@ -112,20 +112,6 @@ del_pkg = "DROP TABLE IF EXISTS packages, conflicts, depends, state"
 
 opt_dep_group = 0
 
-def parse_vstring(version_string):
-    if ">=" in version_string:
-        return (version_string.split(">=")[0], version_string.split(">=")[1], ge)
-    elif "<=" in version_string:
-        return (version_string.split("<=")[0], version_string.split("<=")[1], le)
-    elif "=" in version_string:
-        return (version_string.split("=")[0], version_string.split("=")[1], eq)
-    elif "<" in version_string:
-        return (version_string.split("<")[0], version_string.split("<")[1], lt)
-    elif ">" in version_string:
-        return (version_string.split(">")[0], version_string.split(">")[1], gt)
-    else:
-        return version_string, None, None
-
 
 def parse_constraints(constraints):
     installs = []
@@ -153,6 +139,22 @@ def parse_constraints(constraints):
                 uninstalls.append(id['id'])
 
     return installs, uninstalls
+
+
+def parse_vstring(version_string):
+    if ">=" in version_string:
+        return (version_string.split(">=")[0], version_string.split(">=")[1], ge)
+    elif "<=" in version_string:
+        return (version_string.split("<=")[0], version_string.split("<=")[1], le)
+    elif "=" in version_string:
+        return (version_string.split("=")[0], version_string.split("=")[1], eq)
+    elif "<" in version_string:
+        return (version_string.split("<")[0], version_string.split("<")[1], lt)
+    elif ">" in version_string:
+        return (version_string.split(">")[0], version_string.split(">")[1], gt)
+    else:
+        return version_string, None, None
+
 
 def add_deps(pid):
     global opt_dep_group
@@ -229,6 +231,7 @@ def add_dep_to_installs(package_id):
     c.execute("SELECT depend_package_id, opt_dep_group, weight, must_be_installed, weight FROM depends, packages WHERE package_id = %s AND packages.id = %s " + check_in + check_in_2 + " ORDER BY weight ASC", [package_id, package_id])
     tmp = c.fetchall() # Only get ID
     dependencies = []
+    #print(package_id)
     if len(tmp) != 0:
         for d in tmp:
             add_deps(d['depend_package_id'])
@@ -245,13 +248,14 @@ def add_dep_to_installs(package_id):
         # THIS NEEDS TO BE CHANGED! Just because we don't have any dependencies doesn't mean we are required!
         add_conflict_to_uninstalls(package_id)
         # We don't have any dependencies, don't need to add to graph, just install whenever
-        if package_id in initial_installs:
+        ii, _ = parse_constraints(constraints) # For some stupid reason initial_installs was being overwritten when this was being called - no idea why!
+        if package_id in ii:
+            #print(package_id)
             G.add_node(package_id, required=1, opt_dep_group=-1, conflict=False)
         else:
             G.add_node(package_id, required=0, opt_dep_group=-1, conflict=False)
         installs_no_deps.append(package_id)
     installs.extend(dependencies)
-    #map(lambda x: add_dep_to_installs(x), dependencies)
 
 
 def add_conflict_to_uninstalls(package_id):
@@ -328,9 +332,8 @@ conn.commit()
 
 # Do everything basically
 for i in installs:
+    #print("Install: " + str(i))
     add_dep_to_installs(i)
-
-
 
 solver = Solver()
 
@@ -345,10 +348,10 @@ for n in G.nodes(data=True):
         solver.add(Bool(n[0]))
         trues.append(n[0])
     else:
+        #print("got here")
         if n[1]['opt_dep_group'] in var_groups.keys():
             var_groups[n[1]['opt_dep_group']].append(Bool(n[0]))
         else:
-            #print("got here and here")
             var_groups[n[1]['opt_dep_group']] = []
             var_groups[n[1]['opt_dep_group']].append(Bool(n[0]))
 
@@ -358,6 +361,7 @@ for var_group in var_groups:
 
 solver.add(And(ors))
 
+#print(solver)
 
 r = solver.check()
 
@@ -374,27 +378,10 @@ elif r == unknown:
 
 m = solver.model()
 
-
-
-#solution = solver.solve(expression)
 packages_to_install = []
 packages_to_uninstall = []
 
 packages_to_install.extend(trues)
-
-#if solution.error != False:
-#    print("Error:")
-#    print(solution.error)
-#elif solution.success:
-#    for var in solution.varmap.keys():
-#        print(str(var.name) + " " + str(solution[var]))
-#        if solution[var] is True:
-#            packages_to_install.append(var.name)
-#        else:
-#            packages_to_uninstall.append(var.name)
-#else:
-#    print("The expression cannot be satisfied")
-#
 
 G_copy = G.copy()
 
@@ -403,12 +390,19 @@ for node in G_copy.nodes(data=True):
         G.remove_node(node[0])
 
 
-nx.draw(G, with_labels=True)
-plt.show()
+#nx.draw(G, with_labels=True)
+#plt.show()
 
 c.execute("SELECT package_id FROM state")
 res = c.fetchall()
 state_ids = map(lambda x: x['package_id'], res)
+
+#for n in installs_no_deps:
+#    c.execute("SELECT name, version FROM packages WHERE id = %s", [n])
+#    res = c.fetchone()
+#    if n not in install_order_ids:
+#        install_order.append("+" + res['name'] + "=" + res['version'])
+#        install_order_ids.append(n)
 
 for n in nx.algorithms.dag.topological_sort(G.reverse()):
     if n in packages_to_install and n not in all_conflicts:
@@ -416,25 +410,15 @@ for n in nx.algorithms.dag.topological_sort(G.reverse()):
         res = c.fetchone()
         install_order.append("+" + res['name'] + "=" + res['version'])
         install_order_ids.append(n)
-    elif n in install_order_ids or n in state_ids or n in all_conflicts:
+    elif n in install_order_ids or n in state_ids:
         # Only uninstall if its in the state, or it's already been installed
         c.execute("SELECT name, version FROM packages WHERE id = %s", [n])
         res = c.fetchone()
         install_order.append("-" + res['name'] + "=" + res['version'])
         install_order_ids.append(n)
 
-for n in installs_no_deps:
-    c.execute("SELECT name, version FROM packages WHERE id = %s", [n])
-    res = c.fetchone()
-    #print(n)
-    if n not in list(G.nodes) and n not in uninstalls:
-        install_order.append("+" + res['name'] + "=" + res['version'])
-        install_order_ids.append(n)
-
 print(json.dumps(install_order))
 
-
-#time.sleep(50000)
 
 c.execute(unset_for_key_check)
 c.execute(del_pkg)
