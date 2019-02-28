@@ -245,7 +245,10 @@ def add_dep_to_installs(package_id):
         # THIS NEEDS TO BE CHANGED! Just because we don't have any dependencies doesn't mean we are required!
         add_conflict_to_uninstalls(package_id)
         # We don't have any dependencies, don't need to add to graph, just install whenever
-        G.add_node(package_id, required=1, opt_dep_group=-1, conflict=False)
+        if package_id in initial_installs:
+            G.add_node(package_id, required=1, opt_dep_group=-1, conflict=False)
+        else:
+            G.add_node(package_id, required=0, opt_dep_group=-1, conflict=False)
         installs_no_deps.append(package_id)
     installs.extend(dependencies)
     #map(lambda x: add_dep_to_installs(x), dependencies)
@@ -260,6 +263,7 @@ def add_conflict_to_uninstalls(package_id):
         if con['conflict_package_id'] not in initial_installs and con['conflict_package_id'] not in initial_uninstalls:
             G.add_node(con['conflict_package_id'], conflict=True)
             G.add_edge(package_id, con['conflict_package_id'])
+            all_conflicts.append(con['conflict_package_id'])
         if con['conflict_package_id'] not in conflicts:
             conflicts.append(con['conflict_package_id'])
     uninstalls.extend(conflicts)
@@ -295,6 +299,7 @@ installs_no_deps = []
 install_order = []
 install_order_ids = []
 state = []
+all_conflicts = []
 
 # Setup the state
 for i in initial:
@@ -337,7 +342,7 @@ for n in G.nodes(data=True):
     if 'conflict' in n[1].keys() and n[1]['conflict'] is True:
         solver.add(Not(Bool(n[0])))
     elif 'opt_dep_group' not in n[1].keys() or ('required' in n[1].keys() and n[1]['required'] is 1):
-        solver.add(True)
+        solver.add(Bool(n[0]))
         trues.append(n[0])
     else:
         if n[1]['opt_dep_group'] in var_groups.keys():
@@ -406,12 +411,12 @@ res = c.fetchall()
 state_ids = map(lambda x: x['package_id'], res)
 
 for n in nx.algorithms.dag.topological_sort(G.reverse()):
-    if n in packages_to_install:
+    if n in packages_to_install and n not in all_conflicts:
         c.execute("SELECT name, version FROM packages WHERE id = %s", [n])
         res = c.fetchone()
         install_order.append("+" + res['name'] + "=" + res['version'])
         install_order_ids.append(n)
-    elif n in install_order_ids or n in state_ids:
+    elif n in install_order_ids or n in state_ids or n in all_conflicts:
         # Only uninstall if its in the state, or it's already been installed
         c.execute("SELECT name, version FROM packages WHERE id = %s", [n])
         res = c.fetchone()
