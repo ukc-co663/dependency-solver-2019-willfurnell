@@ -253,7 +253,7 @@ def add_dep_to_installs(package_id):
             #print(package_id)
             G.add_node(package_id, required=1, opt_dep_group=-1, conflict=False)
         else:
-            G.add_node(package_id, required=0, opt_dep_group=-1, conflict=False)
+            G.add_node(package_id, required=1, opt_dep_group=-1, conflict=False)
         installs_no_deps.append(package_id)
     installs.extend(dependencies)
 
@@ -264,10 +264,9 @@ def add_conflict_to_uninstalls(package_id):
     tmp = c.fetchall()
     conflicts = []
     for con in tmp:
-        if con['conflict_package_id'] not in initial_installs and con['conflict_package_id'] not in initial_uninstalls:
-            G.add_node(con['conflict_package_id'], conflict=True)
-            G.add_edge(package_id, con['conflict_package_id'])
-            all_conflicts.append(con['conflict_package_id'])
+        G.add_node(con['conflict_package_id'], conflict=True)
+        G.add_edge(package_id, con['conflict_package_id'])
+        all_conflicts.append(con['conflict_package_id'])
         if con['conflict_package_id'] not in conflicts:
             conflicts.append(con['conflict_package_id'])
     uninstalls.extend(conflicts)
@@ -338,35 +337,59 @@ for i in installs:
 solver = Solver()
 
 var_mapping = {}
-var_groups = {}
+node_groups =[]
 trues = []
 ands = []
 #print(G.nodes(data=True))
+
+
+# Pseudocode
+
+# Go through graph in reverse order
+# Get all the direct descendants of a node
+# These must be conflicts or dependencies
+# So And([list of direct descendants])
+# Inside the And we also may have Or, which would be the optional dependency groups
+# Then get the direct descendents of these nodes etc. etc.
+# Eventually we will have translated the whole graph structure to a SAT problem, can solve this and get what we need
+# to install
+
 for n in G.nodes(data=True):
-    if 'conflict' in n[1].keys() and n[1]['conflict'] is True:
-        v = Bool(n[0])
-        solver.add(Not(v))
-        var_mapping[n[0]] = v
-    elif 'opt_dep_group' not in n[1].keys() or ('required' in n[1].keys() and n[1]['required'] is 1):
-        solver.add(True)
-        trues.append(n[0])
-    else:
-        #print("got here")
-        if n[1]['opt_dep_group'] in var_groups.keys():
-            v = Bool(n[0])
-            var_groups[n[1]['opt_dep_group']].append(v)
-            var_mapping[n[0]] = v
+    direct_descendants = G[n[0]].keys()
+    nodes = G.nodes(data=True)
+    node_descendant = []
+    var_groups = {}
+    for descendant in direct_descendants:
+        if 'conflict' in nodes[descendant].keys() and nodes[descendant]['conflict'] is True:
+            v = Bool(descendant)
+            node_descendant.append(Not(v))
+            var_mapping[descendant] = v
+        elif 'opt_dep_group' not in nodes[descendant].keys() or ('required' in nodes[descendant].keys() and nodes[descendant]['required'] is 1):
+            node_descendant.append(True)
+            trues.append(descendant)
         else:
-            var_groups[n[1]['opt_dep_group']] = []
-            v = Bool(n[0])
-            var_groups[n[1]['opt_dep_group']].append(v)
-            var_mapping[n[0]] = v
+            #print("got here")
+            if nodes[descendant]['opt_dep_group'] in var_groups.keys():
+                v = Bool(descendant)
+                var_groups[nodes[descendant]['opt_dep_group']].append(v)
+                var_mapping[descendant] = v
+            else:
+                var_groups[nodes[descendant]['opt_dep_group']] = []
+                v = Bool(descendant)
+                var_groups[nodes[descendant]['opt_dep_group']].append(v)
+                var_mapping[descendant] = v
 
-ors = []
-for var_group in var_groups:
-    ors.append(Or(var_groups[var_group]))
+    ors = []
+    for var_group in var_groups:
+        ors.append(Or(var_groups[var_group]))
+    if ors:
+        node_descendant.append(And(ors))
+    if node_descendant:
+        node_groups.append(And(node_descendant))
 
-solver.add(And(ors))
+solver.add(And(node_groups))
+
+#print(all_conflicts)
 
 #print(solver)
 
@@ -393,20 +416,23 @@ packages_to_install.extend(trues)
 
 G_copy = G.copy()
 
+c.execute("SELECT package_id FROM state")
+res = c.fetchall()
+state_ids = list(map(lambda x: x['package_id'], res))
+
 #print(var_mapping)
 #print(trues)
-
-for node in G_copy.nodes():
-    if node not in trues and not m[var_mapping[node]]:
-        #print("Node: " + str(node) + " being removed")
-        G.remove_node(node)
+#print(state_ids)
+for node in G_copy.nodes(data=True):
+    try:
+        if node[0] not in trues and not m[var_mapping[node[0]]] and not node[0] in state_ids:
+            #print("Node: " + str(node[0]) + " being removed")
+            G.remove_node(node[0])
+    except KeyError:
+        pass
 
 #nx.draw(G, with_labels=True)
 #plt.show()
-
-c.execute("SELECT package_id FROM state")
-res = c.fetchall()
-state_ids = map(lambda x: x['package_id'], res)
 
 #for n in installs_no_deps:
 #    c.execute("SELECT name, version FROM packages WHERE id = %s", [n])
@@ -416,12 +442,12 @@ state_ids = map(lambda x: x['package_id'], res)
 #        install_order_ids.append(n)
 
 for n in nx.algorithms.dag.topological_sort(G.reverse()):
-    if n in packages_to_install or n not in all_conflicts:
+    if n not in all_conflicts:
         c.execute("SELECT name, version FROM packages WHERE id = %s", [n])
         res = c.fetchone()
         install_order.append("+" + res['name'] + "=" + res['version'])
         install_order_ids.append(n)
-    elif n in install_order_ids or n in state_ids:
+    elif n in state_ids or n in install_order_ids:
         # Only uninstall if its in the state, or it's already been installed
         c.execute("SELECT name, version FROM packages WHERE id = %s", [n])
         res = c.fetchone()
