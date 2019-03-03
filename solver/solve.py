@@ -6,9 +6,6 @@ from packaging import version as vparser
 import pymysql.cursors
 import matplotlib.pyplot as plt
 import sys
-from satispy import Variable, Cnf
-from satispy.solver import Minisat
-import time
 from z3 import Solver, Bool, Not, Or, And, unsat, unknown, Z3Exception
 
 no_sql_notes = "SET sql_notes = 0"
