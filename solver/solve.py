@@ -124,7 +124,7 @@ def parse_constraints(constraints):
                 id = c.fetchone()
                 installs.append(id['id'])
             else:
-                c.execute("SELECT id FROM packages WHERE name = %s ORDER BY version", [constraint[1:]])
+                c.execute("SELECT id FROM packages WHERE name = %s ORDER BY weight", [constraint[1:]])
                 id = c.fetchone()
                 installs.append(id['id'])
         else:
@@ -134,7 +134,7 @@ def parse_constraints(constraints):
                 id = c.fetchone()
                 uninstalls.append(id['id'])
             else:
-                c.execute("SELECT id FROM packages WHERE name = %s ORDER BY version", [constraint[1:]])
+                c.execute("SELECT id FROM packages WHERE name = %s ORDER BY weight", [constraint[1:]])
                 id = c.fetchone()
                 uninstalls.append(id['id'])
 
@@ -324,9 +324,9 @@ for i in initial:
         c.execute("INSERT INTO state(package_id) VALUES(%s)", [res['id']])
         state.append(res['id'])
     else:
-        c.execute("SELECT id, version FROM packages WHERE name = %s", [i])
+        c.execute("SELECT id, weight FROM packages WHERE name = %s ORDER BY weight ASC", [i])
         ps = c.fetchall()
-        pid = sorted(ps, key=lambda x: version.parse(x['version']))[0]['id']
+        pid = ps[0]['id']
         c.execute("INSERT INTO state(package_id) VALUES(%s)", [pid])
         state.append(pid)
 
@@ -341,7 +341,8 @@ for n in set(uninstalls):
 conn.commit()
 
 # Do everything basically
-for i in installs:
+ii, _ = parse_constraints(constraints)
+for i in ii:
     #print("Install: " + str(i))
     G.add_node(i, required=1, opt_dep_group=-1, conflict=False)
     add_dep_to_installs(i)
@@ -377,7 +378,7 @@ for n in G.nodes(data=True):
             v = Bool(descendant)
             node_descendant.append(Not(v))
             var_mapping[descendant] = v
-        elif 'required' in nodes[descendant].keys() and nodes[descendant]['required'] is 1:
+        elif 'required' in nodes[descendant].keys() and nodes[descendant]['required'] == 1:
             node_descendant.append(True)
             trues.append(descendant)
         else:
