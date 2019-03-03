@@ -241,10 +241,10 @@ def add_dep_to_installs(package_id):
                 if d['depend_package_id'] not in installs:
                     add_dep_to_installs(d['depend_package_id'])
                 ii, _ = parse_constraints(constraints)
-                if d['depend_package_id'] not in ii:
-                    G.add_node(d['depend_package_id'], opt_dep_group=d['opt_dep_group'], required=d['must_be_installed'],
+                #if d['depend_package_id'] not in ii:
+                G.add_node(d['depend_package_id'], opt_dep_group=d['opt_dep_group'], required=0,
                            weight=d['weight'], conflict=False)
-                    G.add_edge(package_id, d['depend_package_id'])
+                G.add_edge(package_id, d['depend_package_id'])
                 if d['depend_package_id'] not in dependencies:
                     dependencies.append(d['depend_package_id'])
         else:
@@ -366,7 +366,11 @@ ands = []
 # Eventually we will have translated the whole graph structure to a SAT problem, can solve this and get what we need
 # to install
 
-#print(G.nodes(data=True))
+#for root_nodes in
+
+cycles = nx.recursive_simple_cycles(G)
+for cycle in cycles:
+    G.remove_nodes_from(cycle[1:])
 
 for n in G.nodes(data=True):
     direct_descendants = G[n[0]].keys()
@@ -404,6 +408,9 @@ for n in G.nodes(data=True):
 solver.add(And(node_groups))
 
 #print(all_conflicts)
+
+nx.draw(G, with_labels=True)
+plt.show()
 
 #print(solver)
 
