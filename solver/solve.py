@@ -223,40 +223,43 @@ def add_conflicts(pid):
 
 
 def add_dep_to_installs(package_id):
-    add_deps(package_id)
-    add_conflicts(package_id)
-    check_in = "AND package_id NOT IN (" + ", ".join(map(str, uninstalls)) + ")" if len(uninstalls) > 0 else ""
-    #check_in_2 = "AND depend_package_id NOT IN (" + ", ".join(map(str, installs)) + ")" if len(installs) > 0 else ""
-    check_in_2 = ""
-    c.execute("SELECT depend_package_id, opt_dep_group, weight, must_be_installed, weight FROM depends, packages WHERE package_id = %s AND packages.id = %s " + check_in + check_in_2 + " ORDER BY weight ASC", [package_id, package_id])
-    tmp = c.fetchall() # Only get ID
-    dependencies = []
-    if len(tmp) != 0:
-        for d in tmp:
-            add_deps(d['depend_package_id'])
-            add_conflicts(d['depend_package_id'])
-            add_conflict_to_uninstalls(d['depend_package_id'])
-            if d['depend_package_id'] not in installs:
-                add_dep_to_installs(d['depend_package_id'])
+    if package_id not in seen:
+        seen.append(package_id)
+        add_deps(package_id)
+        add_conflicts(package_id)
+        check_in = "AND package_id NOT IN (" + ", ".join(map(str, uninstalls)) + ")" if len(uninstalls) > 0 else ""
+        #check_in_2 = "AND depend_package_id NOT IN (" + ", ".join(map(str, installs)) + ")" if len(installs) > 0 else ""
+        check_in_2 = ""
+        c.execute("SELECT depend_package_id, opt_dep_group, weight, must_be_installed, weight FROM depends, packages WHERE package_id = %s AND packages.id = %s " + check_in + check_in_2 + " ORDER BY weight ASC", [package_id, package_id])
+        tmp = c.fetchall() # Only get ID
+        dependencies = []
+        if len(tmp) != 0:
+            for d in tmp:
+                add_deps(d['depend_package_id'])
+                add_conflicts(d['depend_package_id'])
+                add_conflict_to_uninstalls(d['depend_package_id'])
+                if d['depend_package_id'] not in installs:
+                    add_dep_to_installs(d['depend_package_id'])
+                ii, _ = parse_constraints(constraints)
+                if d['depend_package_id'] not in ii:
+                    G.add_node(d['depend_package_id'], opt_dep_group=d['opt_dep_group'], required=d['must_be_installed'],
+                           weight=d['weight'], conflict=False)
+                    G.add_edge(package_id, d['depend_package_id'])
+                if d['depend_package_id'] not in dependencies:
+                    dependencies.append(d['depend_package_id'])
+        else:
+            # THIS NEEDS TO BE CHANGED! Just because we don't have any dependencies doesn't mean we are required!
+            add_conflict_to_uninstalls(package_id)
+            # We don't have any dependencies, don't need to add to graph, just install whenever
+            #ii, _ = parse_constraints(constraints) # For some stupid reason initial_installs was being overwritten when this was being called - no idea why!
+            #if package_id in ii:
+            #    G.add_node(package_id, required=1, opt_dep_group=-1, conflict=False)
+            #else:
             ii, _ = parse_constraints(constraints)
-            if d['depend_package_id'] not in ii:
-                G.add_node(d['depend_package_id'], opt_dep_group=d['opt_dep_group'], required=d['must_be_installed'],
-                       weight=d['weight'], conflict=False)
-            G.add_edge(package_id, d['depend_package_id'])
-            if d['depend_package_id'] not in dependencies:
-                dependencies.append(d['depend_package_id'])
-    else:
-        # THIS NEEDS TO BE CHANGED! Just because we don't have any dependencies doesn't mean we are required!
-        add_conflict_to_uninstalls(package_id)
-        # We don't have any dependencies, don't need to add to graph, just install whenever
-        #ii, _ = parse_constraints(constraints) # For some stupid reason initial_installs was being overwritten when this was being called - no idea why!
-        #if package_id in ii:
-        #    G.add_node(package_id, required=1, opt_dep_group=-1, conflict=False)
-        #else:
-        if package_id not in G.nodes:
-            G.add_node(package_id, required=0, opt_dep_group=-1, conflict=False)
-        installs_no_deps.append(package_id)
-    installs.extend(dependencies)
+            if package_id not in ii:
+                G.add_node(package_id, required=0, opt_dep_group=-1, conflict=False)
+            installs_no_deps.append(package_id)
+        installs.extend(dependencies)
 
 
 def add_conflict_to_uninstalls(package_id):
@@ -296,6 +299,10 @@ for p in repository:
 
 conn.commit()
 
+c.execute("SELECT id, name FROM packages")
+ps = c.fetchall()
+#print(ps)
+
 G = nx.DiGraph()
 
 installs, uninstalls = parse_constraints(constraints)
@@ -306,6 +313,7 @@ install_order = []
 install_order_ids = []
 state = []
 all_conflicts = []
+seen = []
 
 # Setup the state
 for i in initial:
@@ -369,7 +377,7 @@ for n in G.nodes(data=True):
             v = Bool(descendant)
             node_descendant.append(Not(v))
             var_mapping[descendant] = v
-        elif 'opt_dep_group' not in nodes[descendant].keys() or ('required' in nodes[descendant].keys() and nodes[descendant]['required'] is 1):
+        elif 'required' in nodes[descendant].keys() and nodes[descendant]['required'] is 1:
             node_descendant.append(True)
             trues.append(descendant)
         else:
