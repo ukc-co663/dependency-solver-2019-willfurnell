@@ -409,8 +409,8 @@ solver.add(And(node_groups))
 
 #print(all_conflicts)
 
-nx.draw(G, with_labels=True)
-plt.show()
+#nx.draw(G, with_labels=True)
+#plt.show()
 
 #print(solver)
 
@@ -452,7 +452,7 @@ for node in G_copy.nodes(data=True):
 #plt.show()
 
 for n in nx.algorithms.dag.topological_sort(G.reverse()):
-    if n not in all_conflicts:
+    if n not in all_conflicts and n not in install_order_ids:
         c.execute("SELECT name, version FROM packages WHERE id = %s", [n])
         res = c.fetchone()
         install_order.append("+" + res['name'] + "=" + res['version'])
