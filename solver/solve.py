@@ -231,7 +231,6 @@ def add_dep_to_installs(package_id):
     c.execute("SELECT depend_package_id, opt_dep_group, weight, must_be_installed, weight FROM depends, packages WHERE package_id = %s AND packages.id = %s " + check_in + check_in_2 + " ORDER BY weight ASC", [package_id, package_id])
     tmp = c.fetchall() # Only get ID
     dependencies = []
-    #print(package_id)
     if len(tmp) != 0:
         for d in tmp:
             add_deps(d['depend_package_id'])
@@ -239,7 +238,9 @@ def add_dep_to_installs(package_id):
             add_conflict_to_uninstalls(d['depend_package_id'])
             if d['depend_package_id'] not in installs:
                 add_dep_to_installs(d['depend_package_id'])
-            G.add_node(d['depend_package_id'], opt_dep_group=d['opt_dep_group'], required=d['must_be_installed'],
+            ii, _ = parse_constraints(constraints)
+            if d['depend_package_id'] not in ii:
+                G.add_node(d['depend_package_id'], opt_dep_group=d['opt_dep_group'], required=d['must_be_installed'],
                        weight=d['weight'], conflict=False)
             G.add_edge(package_id, d['depend_package_id'])
             if d['depend_package_id'] not in dependencies:
@@ -248,12 +249,12 @@ def add_dep_to_installs(package_id):
         # THIS NEEDS TO BE CHANGED! Just because we don't have any dependencies doesn't mean we are required!
         add_conflict_to_uninstalls(package_id)
         # We don't have any dependencies, don't need to add to graph, just install whenever
-        ii, _ = parse_constraints(constraints) # For some stupid reason initial_installs was being overwritten when this was being called - no idea why!
-        if package_id in ii:
-            #print(package_id)
-            G.add_node(package_id, required=1, opt_dep_group=-1, conflict=False)
-        else:
-            G.add_node(package_id, required=1, opt_dep_group=-1, conflict=False)
+        #ii, _ = parse_constraints(constraints) # For some stupid reason initial_installs was being overwritten when this was being called - no idea why!
+        #if package_id in ii:
+        #    G.add_node(package_id, required=1, opt_dep_group=-1, conflict=False)
+        #else:
+        if package_id not in G.nodes:
+            G.add_node(package_id, required=0, opt_dep_group=-1, conflict=False)
         installs_no_deps.append(package_id)
     installs.extend(dependencies)
 
@@ -264,9 +265,11 @@ def add_conflict_to_uninstalls(package_id):
     tmp = c.fetchall()
     conflicts = []
     for con in tmp:
-        G.add_node(con['conflict_package_id'], conflict=True)
+        ii, _ = parse_constraints(constraints)
+        if con['conflict_package_id'] not in ii:
+            G.add_node(con['conflict_package_id'], conflict=True)
+            all_conflicts.append(con['conflict_package_id'])
         G.add_edge(package_id, con['conflict_package_id'])
-        all_conflicts.append(con['conflict_package_id'])
         if con['conflict_package_id'] not in conflicts:
             conflicts.append(con['conflict_package_id'])
     uninstalls.extend(conflicts)
@@ -332,6 +335,7 @@ conn.commit()
 # Do everything basically
 for i in installs:
     #print("Install: " + str(i))
+    G.add_node(i, required=1, opt_dep_group=-1, conflict=False)
     add_dep_to_installs(i)
 
 solver = Solver()
@@ -340,7 +344,6 @@ var_mapping = {}
 node_groups =[]
 trues = []
 ands = []
-#print(G.nodes(data=True))
 
 
 # Pseudocode
@@ -353,6 +356,8 @@ ands = []
 # Then get the direct descendents of these nodes etc. etc.
 # Eventually we will have translated the whole graph structure to a SAT problem, can solve this and get what we need
 # to install
+
+#print(G.nodes(data=True))
 
 for n in G.nodes(data=True):
     direct_descendants = G[n[0]].keys()
@@ -420,26 +425,15 @@ c.execute("SELECT package_id FROM state")
 res = c.fetchall()
 state_ids = list(map(lambda x: x['package_id'], res))
 
-#print(var_mapping)
-#print(trues)
-#print(state_ids)
 for node in G_copy.nodes(data=True):
     try:
         if node[0] not in trues and not m[var_mapping[node[0]]] and not node[0] in state_ids:
-            #print("Node: " + str(node[0]) + " being removed")
             G.remove_node(node[0])
     except KeyError:
         pass
 
 #nx.draw(G, with_labels=True)
 #plt.show()
-
-#for n in installs_no_deps:
-#    c.execute("SELECT name, version FROM packages WHERE id = %s", [n])
-#    res = c.fetchone()
-#    if n not in install_order_ids:
-#        install_order.append("+" + res['name'] + "=" + res['version'])
-#        install_order_ids.append(n)
 
 for n in nx.algorithms.dag.topological_sort(G.reverse()):
     if n not in all_conflicts:
