@@ -167,23 +167,27 @@ def add_deps(pid):
             for dep in dlist:
                 package_name, package_version, package_req = parse_vstring(dep)
                 if package_req is not None and package_version is not None:
-                    c.execute("SELECT id, version FROM packages WHERE name = %s", [package_name])
+                    c.execute("SELECT id, version, weight FROM packages WHERE name = %s ORDER BY weight ASC", [package_name])
                     packages = c.fetchall()
                     if len(packages) != 0:
                         packages_rightversion = filter(lambda x: package_req(vparser.parse(x['version']), vparser.parse(package_version)), packages)
                         l = list(packages_rightversion)
                         if len(l) > 0:
-                            depid = sorted(l, key=lambda x: vparser.parse(x['version']))[0]['id']
+                            #sorted(l, key=lambda x: x['weight'])
+                            depid = l[0]['id']
                             try:
                                 c.execute("INSERT INTO depends(package_id, depend_package_id, must_be_installed, opt_dep_group) VALUES (%s, %s, %s, %s)", [pid, depid, must_be_installed, opt_dep_group])
                             except pymysql.IntegrityError:
                                 pass
                 else:
-                    c.execute("SELECT id, version FROM packages WHERE name = %s", [package_name])
+                    c.execute("SELECT id, version, weight FROM packages WHERE name = %s ORDER BY weight ASC", [package_name])
                     packages = c.fetchall()
                     if len(packages) != 0:
-                        # We didn't find ANY packages in the repo with this name! That means that we should probably just ignore this dependency is even a thing
-                        depid = sorted(packages, key=lambda x: vparser.parse(x['version']))[0]['id']
+                        # We didn't find ANY packages in the repo with this name! That mean
+                        # list(sorted(packages, key=lambda x: x['weight']))
+
+                        depid = packages[0]['id']
+
                         try:
                             c.execute("INSERT INTO depends(package_id, depend_package_id, must_be_installed, opt_dep_group) VALUES (%s, %s, %s, %s)", [pid, depid, must_be_installed, opt_dep_group])
                         except pymysql.IntegrityError:
