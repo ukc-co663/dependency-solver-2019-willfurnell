@@ -363,8 +363,6 @@ ands = []
 # Eventually we will have translated the whole graph structure to a SAT problem, can solve this and get what we need
 # to install
 
-#for root_nodes in
-
 cycles = nx.recursive_simple_cycles(G)
 for cycle in cycles:
     G.remove_nodes_from(cycle[1:])
@@ -449,7 +447,7 @@ for node in G_copy.nodes(data=True):
 #plt.show()
 
 for n in nx.algorithms.dag.topological_sort(G.reverse()):
-    if n not in all_conflicts and n not in install_order_ids:
+    if n not in all_conflicts and n not in install_order_ids and n not in state_ids:
         c.execute("SELECT name, version FROM packages WHERE id = %s", [n])
         res = c.fetchone()
         install_order.append("+" + res['name'] + "=" + res['version'])
