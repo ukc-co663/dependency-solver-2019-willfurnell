@@ -124,7 +124,12 @@ def parse_constraints(constraints, order_by):
             else:
                 c.execute("SELECT id FROM packages WHERE name = %s ORDER BY " + order_by, [constraint[1:]])
                 id = c.fetchone()
-                installs.append(id['id'])
+                if id is not None:
+                    installs.append(id['id'])
+                else:
+                    c.execute("SELECT id FROM packages WHERE name = %s ORDER BY weight ASC", [constraint[1:]])
+                    id = c.fetchone()
+                    installs.append(id['id'])
         else:
             if "=" in constraint:
                 const = constraint[1:].split("=")
@@ -134,7 +139,12 @@ def parse_constraints(constraints, order_by):
             else:
                 c.execute("SELECT id FROM packages WHERE name = %s ORDER BY " + order_by, [constraint[1:]])
                 id = c.fetchone()
-                uninstalls.append(id['id'])
+                if id is not None:
+                    uninstalls.append(id['id'])
+                else:
+                    c.execute("SELECT id FROM packages WHERE name = %s ORDER BY weight ASC", [constraint[1:]])
+                    id = c.fetchone()
+                    uninstalls.append(id['id'])
 
     return installs, uninstalls
 
@@ -174,12 +184,28 @@ def add_deps(pid, order_by):
                         packages_rightversion = filter(lambda x: package_req(vparser.parse(x['version']), vparser.parse(package_version)), packages)
                         l = list(packages_rightversion)
                         if len(l) > 0:
-                            #sorted(l, key=lambda x: x['weight'])
                             depid = l[0]['id']
                             try:
                                 c.execute("INSERT INTO depends(package_id, depend_package_id, must_be_installed, opt_dep_group) VALUES (%s, %s, %s, %s)", [pid, depid, must_be_installed, opt_dep_group])
                             except pymysql.IntegrityError:
                                 pass
+                    else:
+                        c.execute("SELECT id, version, weight FROM packages WHERE name = %s ORDER BY weight ASC",
+                                  [package_name])
+                        packages = c.fetchall()
+                        if len(packages) != 0:
+                            packages_rightversion = filter(
+                                lambda x: package_req(vparser.parse(x['version']), vparser.parse(package_version)),
+                                packages)
+                            l = list(packages_rightversion)
+                            if len(l) > 0:
+                                depid = l[0]['id']
+                                try:
+                                    c.execute(
+                                        "INSERT INTO depends(package_id, depend_package_id, must_be_installed, opt_dep_group) VALUES (%s, %s, %s, %s)",
+                                        [pid, depid, must_be_installed, opt_dep_group])
+                                except pymysql.IntegrityError:
+                                    pass
                 else:
                     c.execute("SELECT id, version, weight FROM packages WHERE name = %s ORDER BY " + order_by, [package_name])
                     packages = c.fetchall()
@@ -193,6 +219,20 @@ def add_deps(pid, order_by):
                             c.execute("INSERT INTO depends(package_id, depend_package_id, must_be_installed, opt_dep_group) VALUES (%s, %s, %s, %s)", [pid, depid, must_be_installed, opt_dep_group])
                         except pymysql.IntegrityError:
                             pass
+                    else:
+                        c.execute("SELECT id, version, weight FROM packages WHERE name = %s ORDER BY weight ASC",
+                                  [package_name])
+                        packages = c.fetchall()
+                        if len(packages) != 0:
+
+                            depid = packages[0]['id']
+
+                            try:
+                                c.execute(
+                                    "INSERT INTO depends(package_id, depend_package_id, must_be_installed, opt_dep_group) VALUES (%s, %s, %s, %s)",
+                                    [pid, depid, must_be_installed, opt_dep_group])
+                            except pymysql.IntegrityError:
+                                pass
             opt_dep_group += 1
     conn.commit()
 
@@ -301,7 +341,7 @@ conn.commit()
 
 sols = []
 costs = []
-order_bys = ['weight ASC', 'weight DESC', 'version ASC', 'version DESC', 'name ASC', 'name DESC']
+order_bys = ['weight ASC', 'weight DESC', 'version ASC', 'version DESC', 'name ASC', 'name DESC', 'id ASC', 'id DESC', 'weight ASC LIMIT 1,1', 'weight ASC LIMIT 2,1', 'weight ASC LIMIT 3,1', 'weight ASC LIMIT 4,1']
 
 for order in order_bys:
     c.execute(conflicts_db)
@@ -482,7 +522,7 @@ for order in order_bys:
     c.execute(set_for_key_check)
     conn.commit()
 
-smallest_index = costs.index(min(costs))
+smallest_index = costs.index(min([x for x in costs if x != 0]))
 print(sols[smallest_index])
 
 c.execute(unset_for_key_check)
