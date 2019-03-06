@@ -181,23 +181,13 @@ def add_deps(pid, order_by):
                               [package_name])
                     packages = c.fetchall()
                     if len(packages) != 0:
-                        packages_rightversion = filter(
-                            lambda x: package_req(vparser.parse(x['version']), vparser.parse(package_version)),
-                            packages)
-                        l = list(packages_rightversion)
-                        if len(l) > 0:
-                            install_dep(must_be_installed, opt_dep_group, l, pid)
+                        add_deps_versions_to_db(must_be_installed, opt_dep_group, packages, pid, package_req, package_version)
                     else:
                         c.execute("SELECT id, version, weight FROM packages WHERE name = %s ORDER BY weight ASC",
                                   [package_name])
                         packages = c.fetchall()
                         if len(packages) != 0:
-                            packages_rightversion = filter(
-                                lambda x: package_req(vparser.parse(x['version']), vparser.parse(package_version)),
-                                packages)
-                            l = list(packages_rightversion)
-                            if len(l) > 0:
-                                install_dep(must_be_installed, opt_dep_group, l, pid)
+                            add_deps_versions_to_db(must_be_installed, opt_dep_group, packages, pid, package_req, package_version)
                 else:
                     c.execute("SELECT id, version, weight FROM packages WHERE name = %s ORDER BY " + order_by,
                               [package_name])
@@ -206,18 +196,27 @@ def add_deps(pid, order_by):
                         # We didn't find ANY packages in the repo with this name! That mean
                         # list(sorted(packages, key=lambda x: x['weight']))
 
-                        install_dep(must_be_installed, opt_dep_group, packages, pid)
+                        add_dep_to_db(must_be_installed, opt_dep_group, packages, pid)
                     else:
                         c.execute("SELECT id, version, weight FROM packages WHERE name = %s ORDER BY weight ASC",
                                   [package_name])
                         packages = c.fetchall()
                         if len(packages) != 0:
-                            install_dep(must_be_installed, opt_dep_group, packages, pid)
+                            add_dep_to_db(must_be_installed, opt_dep_group, packages, pid)
             opt_dep_group += 1
     conn.commit()
 
 
-def install_dep(must_be_installed, opt_dep_group, packages, pid):
+def add_deps_versions_to_db(must_be_installed, opt_dep_group, packages, pid, package_req, package_version):
+    packages_rightversion = filter(
+        lambda x: package_req(vparser.parse(x['version']), vparser.parse(package_version)),
+        packages)
+    l = list(packages_rightversion)
+    if len(l) > 0:
+        add_dep_to_db(must_be_installed, opt_dep_group, l, pid)
+
+
+def add_dep_to_db(must_be_installed, opt_dep_group, packages, pid):
     depid = packages[0]['id']
     try:
         c.execute(
@@ -284,13 +283,7 @@ def add_dep_to_installs(package_id, order_by):
                 if d['depend_package_id'] not in dependencies:
                     dependencies.append(d['depend_package_id'])
         else:
-            # THIS NEEDS TO BE CHANGED! Just because we don't have any dependencies doesn't mean we are required!
             add_conflict_to_uninstalls(package_id, order_by)
-            # We don't have any dependencies, don't need to add to graph, just install whenever
-            # ii, _ = parse_constraints(constraints) # For some stupid reason initial_installs was being overwritten when this was being called - no idea why!
-            # if package_id in ii:
-            #    G.add_node(package_id, required=1, opt_dep_group=-1, conflict=False)
-            # else:
             ii, _ = parse_constraints(constraints, order_by)
             if package_id not in ii:
                 G.add_node(package_id, required=0, opt_dep_group=-1, conflict=False)
@@ -336,7 +329,7 @@ conn.commit()
 
 sols = []
 costs = []
-order_bys = ['weight ASC', 'weight DESC', 'version ASC', 'version DESC', 'name ASC', 'name DESC', 'id ASC', 'id DESC',
+order_bys = ['weight ASC', 'weight DESC', 'version ASC', 'version DESC', 'id DESC',
              'weight ASC LIMIT 1,1', 'weight ASC LIMIT 2,1', 'weight ASC LIMIT 3,1', 'weight ASC LIMIT 4,1']
 
 for order in order_bys:
@@ -517,6 +510,7 @@ for order in order_bys:
     c.execute(set_for_key_check)
     conn.commit()
 
+print(costs)
 smallest_index = costs.index(min([x for x in costs if x != 0]))
 print(sols[smallest_index])
 
