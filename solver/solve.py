@@ -404,17 +404,6 @@ for order in order_bys:
     trues = []
     ands = []
 
-    # Pseudocode
-
-    # Go through graph in reverse order
-    # Get all the direct descendants of a node
-    # These must be conflicts or dependencies
-    # So And([list of direct descendants])
-    # Inside the And we also may have Or, which would be the optional dependency groups
-    # Then get the direct descendents of these nodes etc. etc.
-    # Eventually we will have translated the whole graph structure to a SAT problem, can solve this and get what we need
-    # to install
-
     cycles = nx.recursive_simple_cycles(G)
     for cycle in cycles:
         G.remove_nodes_from(cycle[1:])
@@ -427,8 +416,8 @@ for order in order_bys:
         node_descendant = []
         if n[0] not in var_mapping.keys() and 'conflict' not in nodes[n[0]].keys() and nodes[n[0]]['conflict'] is False:
             v = Bool(n[0])
-            solver.add(v)
-            var_mapping[n[0]] = v
+            solver.add(True)
+            var_mapping[n[0]] = True
         for descendant in direct_descendants:
             if 'conflict' in nodes[descendant].keys() and nodes[descendant]['conflict'] is True:
                 v = Bool(descendant)
@@ -458,6 +447,8 @@ for order in order_bys:
     # print(solver)
 
     models = get_models(solver, 100)
+
+    #print(models)
 
     #print(models)
 
