@@ -425,7 +425,7 @@ for order in order_bys:
         direct_descendants = G[n[0]].keys()
         nodes = G.nodes(data=True)
         node_descendant = []
-        if n[0] not in var_mapping.keys():
+        if n[0] not in var_mapping.keys() and 'conflict' not in nodes[n[0]].keys() and nodes[n[0]]['conflict'] is False:
             v = Bool(n[0])
             solver.add(v)
             var_mapping[n[0]] = v
@@ -456,12 +456,6 @@ for order in order_bys:
     #plt.show()
 
     # print(solver)
-
-    r = solver.check()
-
-    if r == unsat:
-        print("no solution")
-        exit(0)
 
     models = get_models(solver, 100)
 
