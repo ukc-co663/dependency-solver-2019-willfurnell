@@ -502,7 +502,6 @@ for order in order_bys:
     c.execute(set_for_key_check)
     conn.commit()
 
-print(costs)
 smallest_index = costs.index(min(costs))
 print(sols[smallest_index])
 
