@@ -453,13 +453,6 @@ for order in order_bys:
     if r == unsat:
         print("no solution")
         exit(0)
-    elif r == unknown:
-        print("failed to solve")
-        try:
-            print(solver.model())
-        except Z3Exception:
-            pass
-        exit(0)
 
     m = solver.model()
     # print(m)
