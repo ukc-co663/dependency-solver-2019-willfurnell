@@ -329,8 +329,7 @@ conn.commit()
 
 sols = []
 costs = []
-order_bys = ['weight ASC', 'weight DESC', 'version ASC', 'version DESC', 'id DESC',
-             'weight ASC LIMIT 1,1', 'weight ASC LIMIT 2,1', 'weight ASC LIMIT 3,1', 'weight ASC LIMIT 4,1']
+order_bys = ['weight ASC', 'weight DESC', 'version ASC', 'version DESC', 'id DESC', 'weight ASC LIMIT 1,1', 'weight ASC LIMIT 2,1', 'weight ASC LIMIT 3,1', 'weight ASC LIMIT 4,1']
 
 for order in order_bys:
     c.execute(conflicts_db)
@@ -362,7 +361,7 @@ for order in order_bys:
             c.execute("INSERT INTO state(package_id) VALUES(%s)", [res['id']])
             state.append(res['id'])
         else:
-            c.execute("SELECT id, weight FROM packages WHERE name = %s ORDER BY weight ASC", [i])
+            c.execute("SELECT id, weight FROM packages WHERE name = %s ORDER BY " + order, [i])
             ps = c.fetchall()
             pid = ps[0]['id']
             c.execute("INSERT INTO state(package_id) VALUES(%s)", [pid])
@@ -511,7 +510,7 @@ for order in order_bys:
     conn.commit()
 
 print(costs)
-smallest_index = costs.index(min([x for x in costs if x != 0]))
+smallest_index = costs.index(min(costs))
 print(sols[smallest_index])
 
 c.execute(unset_for_key_check)
