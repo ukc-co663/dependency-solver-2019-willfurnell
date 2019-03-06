@@ -5,7 +5,8 @@ from operator import *
 import networkx as nx
 import pymysql.cursors
 from packaging import version as vparser
-from z3 import Solver, Bool, Not, Or, And, unsat, unknown, Z3Exception
+from z3 import Solver, Bool, Not, Or, And, unsat, unknown, Z3Exception, sat
+import matplotlib.pyplot as plt
 
 no_sql_notes = "SET sql_notes = 0"
 if sys.platform == "darwin":
@@ -193,9 +194,6 @@ def add_deps(pid, order_by):
                               [package_name])
                     packages = c.fetchall()
                     if len(packages) != 0:
-                        # We didn't find ANY packages in the repo with this name! That mean
-                        # list(sorted(packages, key=lambda x: x['weight']))
-
                         add_dep_to_db(must_be_installed, opt_dep_group, packages, pid)
                     else:
                         c.execute("SELECT id, version, weight FROM packages WHERE name = %s ORDER BY weight ASC",
@@ -262,6 +260,7 @@ def add_dep_to_installs(package_id, order_by):
         add_conflicts(package_id)
         check_in = "AND package_id NOT IN (" + ", ".join(map(str, uninstalls)) + ")" if len(uninstalls) > 0 else ""
         # check_in_2 = "AND depend_package_id NOT IN (" + ", ".join(map(str, installs)) + ")" if len(installs) > 0 else ""
+        #check_in = ""
         check_in_2 = ""
         c.execute(
             "SELECT depend_package_id, opt_dep_group, weight, must_be_installed, weight FROM depends, packages WHERE package_id = %s AND packages.id = %s " + check_in + check_in_2 + " ORDER BY weight ASC",
@@ -275,8 +274,6 @@ def add_dep_to_installs(package_id, order_by):
                 add_conflict_to_uninstalls(d['depend_package_id'], order_by)
                 if d['depend_package_id'] not in installs:
                     add_dep_to_installs(d['depend_package_id'], order_by)
-                ii, _ = parse_constraints(constraints, order_by)
-                # if d['depend_package_id'] not in ii:
                 G.add_node(d['depend_package_id'], opt_dep_group=d['opt_dep_group'], required=0,
                            weight=d['weight'], conflict=False)
                 G.add_edge(package_id, d['depend_package_id'])
@@ -308,6 +305,22 @@ def add_conflict_to_uninstalls(package_id, order_by):
     map(lambda x: add_conflict_to_uninstalls(x, order_by), conflicts)
 
 
+# Return the first "M" models of formula list of formulas F
+# Copied from here: https://stackoverflow.com/questions/11867611/z3py-checking-all-solutions-for-equation
+def get_models(s, M):
+    result = []
+    while len(result) < M and s.check() != unsat:
+        m = s.model()
+        result.append(m)
+        # Create a new constraint the blocks the current model
+        block = []
+        for d in m:
+            # create a constant from declaration
+            c = d()
+            block.append(c != m[d])
+        s.add(Or(block))
+    return result
+
 conn = make_conn()
 
 c = conn.cursor()
@@ -338,7 +351,7 @@ for order in order_bys:
     conn.commit()
     c.execute("SELECT id, name FROM packages")
     ps = c.fetchall()
-    # print(ps)
+    #print(ps)
 
     G = nx.DiGraph()
 
@@ -406,21 +419,22 @@ for order in order_bys:
     for cycle in cycles:
         G.remove_nodes_from(cycle[1:])
 
+    var_groups = {}
+
     for n in G.nodes(data=True):
         direct_descendants = G[n[0]].keys()
         nodes = G.nodes(data=True)
         node_descendant = []
-        var_groups = {}
+        if n[0] not in var_mapping.keys():
+            v = Bool(n[0])
+            solver.add(v)
+            var_mapping[n[0]] = v
         for descendant in direct_descendants:
             if 'conflict' in nodes[descendant].keys() and nodes[descendant]['conflict'] is True:
                 v = Bool(descendant)
-                node_descendant.append(Not(v))
+                solver.add(Not(v))
                 var_mapping[descendant] = v
-            elif 'required' in nodes[descendant].keys() and nodes[descendant]['required'] == 1:
-                node_descendant.append(True)
-                trues.append(descendant)
             else:
-                # print("got here")
                 if nodes[descendant]['opt_dep_group'] in var_groups.keys():
                     v = Bool(descendant)
                     var_groups[nodes[descendant]['opt_dep_group']].append(v)
@@ -431,20 +445,15 @@ for order in order_bys:
                     var_groups[nodes[descendant]['opt_dep_group']].append(v)
                     var_mapping[descendant] = v
 
-        ors = []
-        for var_group in var_groups:
-            ors.append(Or(var_groups[var_group]))
-        if ors:
-            node_descendant.append(And(ors))
-        if node_descendant:
-            node_groups.append(And(node_descendant))
+    for var_group in var_groups.keys():
+        solver.add(Or(var_groups[var_group]))
 
-    solver.add(And(node_groups))
+    #print(solver)
 
     # print(all_conflicts)
 
-    # nx.draw(G, with_labels=True)
-    # plt.show()
+    #nx.draw(G, with_labels=True)
+    #plt.show()
 
     # print(solver)
 
@@ -454,54 +463,60 @@ for order in order_bys:
         print("no solution")
         exit(0)
 
-    m = solver.model()
+    models = get_models(solver, 100)
+
+    #print(models)
+
     # print(m)
 
-    packages_to_install = []
-    packages_to_uninstall = []
+    for m in models:
 
-    packages_to_install.extend(trues)
+        packages_to_install = []
+        packages_to_uninstall = []
 
-    G_copy = G.copy()
+        packages_to_install.extend(trues)
 
-    c.execute("SELECT package_id FROM state")
-    res = c.fetchall()
-    state_ids = list(map(lambda x: x['package_id'], res))
+        G_copy = G.copy()
 
-    for node in G_copy.nodes(data=True):
-        try:
-            if node[0] not in trues and not m[var_mapping[node[0]]] and not node[0] in state_ids:
-                G.remove_node(node[0])
-        except KeyError:
-            pass
+        c.execute("SELECT package_id FROM state")
+        res = c.fetchall()
+        state_ids = list(map(lambda x: x['package_id'], res))
 
-    # nx.draw(G, with_labels=True)
-    # plt.show()
+        for node in G_copy.nodes(data=True):
+            try:
+                if not m[var_mapping[node[0]]] and not node[0] in state_ids:
+                    G.remove_node(node[0])
+            except KeyError:
+                pass
 
-    cost = 0
+        # nx.draw(G, with_labels=True)
+        # plt.show()
 
-    for n in nx.algorithms.dag.topological_sort(G.reverse()):
-        if n not in all_conflicts and n not in install_order_ids and n not in state_ids:
-            c.execute("SELECT name, version, weight FROM packages WHERE id = %s", [n])
-            res = c.fetchone()
-            install_order.append("+" + res['name'] + "=" + res['version'])
-            install_order_ids.append(n)
-            cost += res['weight']
-        elif n in state_ids or n in install_order_ids:
-            # Only uninstall if its in the state, or it's already been installed
-            c.execute("SELECT name, version FROM packages WHERE id = %s", [n])
-            res = c.fetchone()
-            install_order.append("-" + res['name'] + "=" + res['version'])
-            install_order_ids.append(n)
-            cost += 10 ** 6
+        cost = 0
 
-    sols.append(json.dumps(install_order))
-    costs.append(cost)
+        for n in nx.algorithms.dag.topological_sort(G.reverse()):
+            if n not in all_conflicts and n not in install_order_ids and n not in state_ids:
+                c.execute("SELECT name, version, weight FROM packages WHERE id = %s", [n])
+                res = c.fetchone()
+                install_order.append("+" + res['name'] + "=" + res['version'])
+                install_order_ids.append(n)
+                cost += res['weight']
+            elif n in state_ids or n in install_order_ids:
+                # Only uninstall if its in the state, or it's already been installed
+                c.execute("SELECT name, version FROM packages WHERE id = %s", [n])
+                res = c.fetchone()
+                install_order.append("-" + res['name'] + "=" + res['version'])
+                install_order_ids.append(n)
+                cost += 10 ** 6
+
+        sols.append(json.dumps(install_order))
+        costs.append(cost)
     c.execute(unset_for_key_check)
     c.execute(del_everything_except_pkg)
     c.execute(set_for_key_check)
     conn.commit()
 
+#print(costs)
 smallest_index = costs.index(min(costs))
 print(sols[smallest_index])
 
