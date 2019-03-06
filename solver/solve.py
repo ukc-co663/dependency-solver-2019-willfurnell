@@ -1,11 +1,10 @@
 import argparse
 import json
-import networkx as nx
-from operator import *
-from packaging import version as vparser
-import pymysql.cursors
-import matplotlib.pyplot as plt
 import sys
+from operator import *
+import networkx as nx
+import pymysql.cursors
+from packaging import version as vparser
 from z3 import Solver, Bool, Not, Or, And, unsat, unknown, Z3Exception
 
 no_sql_notes = "SET sql_notes = 0"
@@ -38,70 +37,70 @@ if len(constraints) == 0:
     exit(0)
 
 
-
 def make_conn():
     if sys.platform == "darwin":
         # Connect to the database
         conn = pymysql.connect(host='localhost',
-                             user='root',
-                             password='',
-                             db='depsolve',
-                             charset='utf8mb4',
-                             cursorclass=pymysql.cursors.DictCursor)
+                               user='root',
+                               password='',
+                               db='depsolve',
+                               charset='utf8mb4',
+                               cursorclass=pymysql.cursors.DictCursor)
     else:
         # Connect to the database
         conn = pymysql.connect(unix_socket='/var/run/mysqld/mysqld.sock',
-                             user='root',
-                             password='',
-                             db='depsolve',
-                             charset='utf8mb4',
-                             cursorclass=pymysql.cursors.DictCursor)
+                               user='root',
+                               password='',
+                               db='depsolve',
+                               charset='utf8mb4',
+                               cursorclass=pymysql.cursors.DictCursor)
     return conn
 
+
 package_db = \
-'''
-CREATE TABLE packages (
-    id INTEGER PRIMARY KEY AUTO_INCREMENT,
-    name VARCHAR(255),
-    version VARCHAR(255),
-    weight INTEGER,
-    depends TEXT,
-    conflicts TEXT
-);
-'''
+    '''
+    CREATE TABLE packages (
+        id INTEGER PRIMARY KEY AUTO_INCREMENT,
+        name VARCHAR(255),
+        version VARCHAR(255),
+        weight INTEGER,
+        depends TEXT,
+        conflicts TEXT
+    );
+    '''
 
 conflicts_db = \
-"""
-CREATE TABLE conflicts (
-    package_id INTEGER,
-    conflict_package_id INTEGER,
-    PRIMARY KEY (package_id, conflict_package_id),
-    FOREIGN KEY (package_id) REFERENCES packages(id),
-    FOREIGN KEY (conflict_package_id) REFERENCES packages(id)
-);
-"""
+    """
+    CREATE TABLE conflicts (
+        package_id INTEGER,
+        conflict_package_id INTEGER,
+        PRIMARY KEY (package_id, conflict_package_id),
+        FOREIGN KEY (package_id) REFERENCES packages(id),
+        FOREIGN KEY (conflict_package_id) REFERENCES packages(id)
+    );
+    """
 
 depends_db = \
-"""
-CREATE TABLE depends (
-    package_id INTEGER,
-    depend_package_id INTEGER,
-    must_be_installed INTEGER,
-    opt_dep_group INTEGER,
-    PRIMARY KEY (package_id, depend_package_id),
-    FOREIGN KEY (package_id) REFERENCES packages(id),
-    FOREIGN KEY (depend_package_id) REFERENCES packages(id)
-);
-"""
+    """
+    CREATE TABLE depends (
+        package_id INTEGER,
+        depend_package_id INTEGER,
+        must_be_installed INTEGER,
+        opt_dep_group INTEGER,
+        PRIMARY KEY (package_id, depend_package_id),
+        FOREIGN KEY (package_id) REFERENCES packages(id),
+        FOREIGN KEY (depend_package_id) REFERENCES packages(id)
+    );
+    """
 
 state_db = \
-"""
-CREATE TABLE state (
-    package_id INTEGER,
-    PRIMARY KEY (package_id), 
-    FOREIGN KEY (package_id) REFERENCES packages(id)
-)
-"""
+    """
+    CREATE TABLE state (
+        package_id INTEGER,
+        PRIMARY KEY (package_id), 
+        FOREIGN KEY (package_id) REFERENCES packages(id)
+    )
+    """
 
 unset_for_key_check = "SET foreign_key_checks = 0"
 set_for_key_check = "SET foreign_key_checks = 1"
@@ -178,17 +177,16 @@ def add_deps(pid, order_by):
             for dep in dlist:
                 package_name, package_version, package_req = parse_vstring(dep)
                 if package_req is not None and package_version is not None:
-                    c.execute("SELECT id, version, weight FROM packages WHERE name = %s ORDER BY " + order_by, [package_name])
+                    c.execute("SELECT id, version, weight FROM packages WHERE name = %s ORDER BY " + order_by,
+                              [package_name])
                     packages = c.fetchall()
                     if len(packages) != 0:
-                        packages_rightversion = filter(lambda x: package_req(vparser.parse(x['version']), vparser.parse(package_version)), packages)
+                        packages_rightversion = filter(
+                            lambda x: package_req(vparser.parse(x['version']), vparser.parse(package_version)),
+                            packages)
                         l = list(packages_rightversion)
                         if len(l) > 0:
-                            depid = l[0]['id']
-                            try:
-                                c.execute("INSERT INTO depends(package_id, depend_package_id, must_be_installed, opt_dep_group) VALUES (%s, %s, %s, %s)", [pid, depid, must_be_installed, opt_dep_group])
-                            except pymysql.IntegrityError:
-                                pass
+                            install_dep(must_be_installed, opt_dep_group, l, pid)
                     else:
                         c.execute("SELECT id, version, weight FROM packages WHERE name = %s ORDER BY weight ASC",
                                   [package_name])
@@ -199,42 +197,34 @@ def add_deps(pid, order_by):
                                 packages)
                             l = list(packages_rightversion)
                             if len(l) > 0:
-                                depid = l[0]['id']
-                                try:
-                                    c.execute(
-                                        "INSERT INTO depends(package_id, depend_package_id, must_be_installed, opt_dep_group) VALUES (%s, %s, %s, %s)",
-                                        [pid, depid, must_be_installed, opt_dep_group])
-                                except pymysql.IntegrityError:
-                                    pass
+                                install_dep(must_be_installed, opt_dep_group, l, pid)
                 else:
-                    c.execute("SELECT id, version, weight FROM packages WHERE name = %s ORDER BY " + order_by, [package_name])
+                    c.execute("SELECT id, version, weight FROM packages WHERE name = %s ORDER BY " + order_by,
+                              [package_name])
                     packages = c.fetchall()
                     if len(packages) != 0:
                         # We didn't find ANY packages in the repo with this name! That mean
                         # list(sorted(packages, key=lambda x: x['weight']))
 
-                        depid = packages[0]['id']
-
-                        try:
-                            c.execute("INSERT INTO depends(package_id, depend_package_id, must_be_installed, opt_dep_group) VALUES (%s, %s, %s, %s)", [pid, depid, must_be_installed, opt_dep_group])
-                        except pymysql.IntegrityError:
-                            pass
+                        install_dep(must_be_installed, opt_dep_group, packages, pid)
                     else:
                         c.execute("SELECT id, version, weight FROM packages WHERE name = %s ORDER BY weight ASC",
                                   [package_name])
                         packages = c.fetchall()
                         if len(packages) != 0:
-
-                            depid = packages[0]['id']
-
-                            try:
-                                c.execute(
-                                    "INSERT INTO depends(package_id, depend_package_id, must_be_installed, opt_dep_group) VALUES (%s, %s, %s, %s)",
-                                    [pid, depid, must_be_installed, opt_dep_group])
-                            except pymysql.IntegrityError:
-                                pass
+                            install_dep(must_be_installed, opt_dep_group, packages, pid)
             opt_dep_group += 1
     conn.commit()
+
+
+def install_dep(must_be_installed, opt_dep_group, packages, pid):
+    depid = packages[0]['id']
+    try:
+        c.execute(
+            "INSERT INTO depends(package_id, depend_package_id, must_be_installed, opt_dep_group) VALUES (%s, %s, %s, %s)",
+            [pid, depid, must_be_installed, opt_dep_group])
+    except pymysql.IntegrityError:
+        pass
 
 
 def add_conflicts(pid):
@@ -250,7 +240,8 @@ def add_conflicts(pid):
                 for con in cons:
                     if package_req(vparser.parse(con['version']), vparser.parse(package_version)):
                         try:
-                            c.execute("INSERT INTO conflicts(package_id, conflict_package_id) VALUES (%s, %s)", [pid, con['id']])
+                            c.execute("INSERT INTO conflicts(package_id, conflict_package_id) VALUES (%s, %s)",
+                                      [pid, con['id']])
                         except pymysql.IntegrityError:
                             pass
             else:
@@ -258,7 +249,8 @@ def add_conflicts(pid):
                 cons = c.fetchall()
                 for con in cons:
                     try:
-                        c.execute("INSERT INTO conflicts(package_id, conflict_package_id) VALUES (%s, %s)", [pid, con['id']])
+                        c.execute("INSERT INTO conflicts(package_id, conflict_package_id) VALUES (%s, %s)",
+                                  [pid, con['id']])
                     except pymysql.IntegrityError:
                         pass
     conn.commit()
@@ -270,10 +262,12 @@ def add_dep_to_installs(package_id, order_by):
         add_deps(package_id, order_by)
         add_conflicts(package_id)
         check_in = "AND package_id NOT IN (" + ", ".join(map(str, uninstalls)) + ")" if len(uninstalls) > 0 else ""
-        #check_in_2 = "AND depend_package_id NOT IN (" + ", ".join(map(str, installs)) + ")" if len(installs) > 0 else ""
+        # check_in_2 = "AND depend_package_id NOT IN (" + ", ".join(map(str, installs)) + ")" if len(installs) > 0 else ""
         check_in_2 = ""
-        c.execute("SELECT depend_package_id, opt_dep_group, weight, must_be_installed, weight FROM depends, packages WHERE package_id = %s AND packages.id = %s " + check_in + check_in_2 + " ORDER BY weight ASC", [package_id, package_id])
-        tmp = c.fetchall() # Only get ID
+        c.execute(
+            "SELECT depend_package_id, opt_dep_group, weight, must_be_installed, weight FROM depends, packages WHERE package_id = %s AND packages.id = %s " + check_in + check_in_2 + " ORDER BY weight ASC",
+            [package_id, package_id])
+        tmp = c.fetchall()  # Only get ID
         dependencies = []
         if len(tmp) != 0:
             for d in tmp:
@@ -283,7 +277,7 @@ def add_dep_to_installs(package_id, order_by):
                 if d['depend_package_id'] not in installs:
                     add_dep_to_installs(d['depend_package_id'], order_by)
                 ii, _ = parse_constraints(constraints, order_by)
-                #if d['depend_package_id'] not in ii:
+                # if d['depend_package_id'] not in ii:
                 G.add_node(d['depend_package_id'], opt_dep_group=d['opt_dep_group'], required=0,
                            weight=d['weight'], conflict=False)
                 G.add_edge(package_id, d['depend_package_id'])
@@ -293,10 +287,10 @@ def add_dep_to_installs(package_id, order_by):
             # THIS NEEDS TO BE CHANGED! Just because we don't have any dependencies doesn't mean we are required!
             add_conflict_to_uninstalls(package_id, order_by)
             # We don't have any dependencies, don't need to add to graph, just install whenever
-            #ii, _ = parse_constraints(constraints) # For some stupid reason initial_installs was being overwritten when this was being called - no idea why!
-            #if package_id in ii:
+            # ii, _ = parse_constraints(constraints) # For some stupid reason initial_installs was being overwritten when this was being called - no idea why!
+            # if package_id in ii:
             #    G.add_node(package_id, required=1, opt_dep_group=-1, conflict=False)
-            #else:
+            # else:
             ii, _ = parse_constraints(constraints, order_by)
             if package_id not in ii:
                 G.add_node(package_id, required=0, opt_dep_group=-1, conflict=False)
@@ -334,14 +328,16 @@ conn.commit()
 
 for p in repository:
     # Index repo packages by name and version
-    c.execute("INSERT INTO packages(name, version, weight, depends, conflicts) VALUES (%s, %s, %s, %s, %s)", [p['name'], p['version'], p['size'], json.dumps(p['depends']) if 'depends' in p.keys() else "[]", json.dumps(p['conflicts']) if 'conflicts' in p.keys() else "[]"])
+    c.execute("INSERT INTO packages(name, version, weight, depends, conflicts) VALUES (%s, %s, %s, %s, %s)",
+              [p['name'], p['version'], p['size'], json.dumps(p['depends']) if 'depends' in p.keys() else "[]",
+               json.dumps(p['conflicts']) if 'conflicts' in p.keys() else "[]"])
 
 conn.commit()
 
-
 sols = []
 costs = []
-order_bys = ['weight ASC', 'weight DESC', 'version ASC', 'version DESC', 'name ASC', 'name DESC', 'id ASC', 'id DESC', 'weight ASC LIMIT 1,1', 'weight ASC LIMIT 2,1', 'weight ASC LIMIT 3,1', 'weight ASC LIMIT 4,1']
+order_bys = ['weight ASC', 'weight DESC', 'version ASC', 'version DESC', 'name ASC', 'name DESC', 'id ASC', 'id DESC',
+             'weight ASC LIMIT 1,1', 'weight ASC LIMIT 2,1', 'weight ASC LIMIT 3,1', 'weight ASC LIMIT 4,1']
 
 for order in order_bys:
     c.execute(conflicts_db)
@@ -350,7 +346,7 @@ for order in order_bys:
     conn.commit()
     c.execute("SELECT id, name FROM packages")
     ps = c.fetchall()
-    #print(ps)
+    # print(ps)
 
     G = nx.DiGraph()
 
@@ -392,17 +388,16 @@ for order in order_bys:
     # Do everything basically
     ii, _ = parse_constraints(constraints, order)
     for i in ii:
-        #print("Install: " + str(i))
+        # print("Install: " + str(i))
         G.add_node(i, required=1, opt_dep_group=-1, conflict=False)
         add_dep_to_installs(i, order)
 
     solver = Solver()
 
     var_mapping = {}
-    node_groups =[]
+    node_groups = []
     trues = []
     ands = []
-
 
     # Pseudocode
 
@@ -433,7 +428,7 @@ for order in order_bys:
                 node_descendant.append(True)
                 trues.append(descendant)
             else:
-                #print("got here")
+                # print("got here")
                 if nodes[descendant]['opt_dep_group'] in var_groups.keys():
                     v = Bool(descendant)
                     var_groups[nodes[descendant]['opt_dep_group']].append(v)
@@ -454,12 +449,12 @@ for order in order_bys:
 
     solver.add(And(node_groups))
 
-    #print(all_conflicts)
+    # print(all_conflicts)
 
-    #nx.draw(G, with_labels=True)
-    #plt.show()
+    # nx.draw(G, with_labels=True)
+    # plt.show()
 
-    #print(solver)
+    # print(solver)
 
     r = solver.check()
 
@@ -475,7 +470,7 @@ for order in order_bys:
         exit(0)
 
     m = solver.model()
-    #print(m)
+    # print(m)
 
     packages_to_install = []
     packages_to_uninstall = []
@@ -495,8 +490,8 @@ for order in order_bys:
         except KeyError:
             pass
 
-    #nx.draw(G, with_labels=True)
-    #plt.show()
+    # nx.draw(G, with_labels=True)
+    # plt.show()
 
     cost = 0
 
@@ -513,7 +508,7 @@ for order in order_bys:
             res = c.fetchone()
             install_order.append("-" + res['name'] + "=" + res['version'])
             install_order_ids.append(n)
-            cost += 10**6
+            cost += 10 ** 6
 
     sols.append(json.dumps(install_order))
     costs.append(cost)
