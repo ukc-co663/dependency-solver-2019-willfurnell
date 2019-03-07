@@ -6,6 +6,7 @@ import networkx as nx
 import pymysql.cursors
 from packaging import version as vparser
 from z3 import Solver, Bool, Not, Or, And, unsat, unknown, Z3Exception, sat
+import pycosat
 import matplotlib.pyplot as plt
 
 no_sql_notes = "SET sql_notes = 0"
@@ -206,9 +207,7 @@ def add_deps(pid, order_by):
 
 
 def add_deps_versions_to_db(must_be_installed, opt_dep_group, packages, pid, package_req, package_version):
-    packages_rightversion = filter(
-        lambda x: package_req(vparser.parse(x['version']), vparser.parse(package_version)),
-        packages)
+    packages_rightversion = filter(lambda x: package_req(vparser.parse(x['version']), vparser.parse(package_version)), packages)
     l = list(packages_rightversion)
     if len(l) > 0:
         add_dep_to_db(must_be_installed, opt_dep_group, l, pid)
@@ -253,39 +252,22 @@ def add_conflicts(pid):
     conn.commit()
 
 
-def add_dep_to_installs(package_id, order_by):
+def add_dep_to_installs(package_id, order_by, prev_package_id):
     if package_id not in seen:
         seen.append(package_id)
         add_deps(package_id, order_by)
         add_conflicts(package_id)
-        check_in = "AND package_id NOT IN (" + ", ".join(map(str, uninstalls)) + ")" if len(uninstalls) > 0 else ""
-        # check_in_2 = "AND depend_package_id NOT IN (" + ", ".join(map(str, installs)) + ")" if len(installs) > 0 else ""
-        #check_in = ""
-        check_in_2 = ""
-        c.execute(
-            "SELECT depend_package_id, opt_dep_group, weight, must_be_installed, weight FROM depends, packages WHERE package_id = %s AND packages.id = %s " + check_in + check_in_2 + " ORDER BY weight ASC",
-            [package_id, package_id])
-        tmp = c.fetchall()  # Only get ID
-        dependencies = []
+
+        add_conflict_to_uninstalls(package_id, order_by)
+        G.add_node(package_id)
+        if prev_package_id is not None:
+            G.add_edge(prev_package_id, package_id)
+
+        c.execute("SELECT depend_package_id FROM depends WHERE package_id = %s", [package_id])
+        tmp = c.fetchall()
         if len(tmp) != 0:
             for d in tmp:
-                add_deps(d['depend_package_id'], order_by)
-                add_conflicts(d['depend_package_id'])
-                add_conflict_to_uninstalls(d['depend_package_id'], order_by)
-                if d['depend_package_id'] not in installs:
-                    add_dep_to_installs(d['depend_package_id'], order_by)
-                G.add_node(d['depend_package_id'], opt_dep_group=d['opt_dep_group'], required=0,
-                           weight=d['weight'], conflict=False)
-                G.add_edge(package_id, d['depend_package_id'])
-                if d['depend_package_id'] not in dependencies:
-                    dependencies.append(d['depend_package_id'])
-        else:
-            add_conflict_to_uninstalls(package_id, order_by)
-            ii, _ = parse_constraints(constraints, order_by)
-            if package_id not in ii:
-                G.add_node(package_id, required=0, opt_dep_group=-1, conflict=False)
-            installs_no_deps.append(package_id)
-        installs.extend(dependencies)
+                add_dep_to_installs(d['depend_package_id'], order_by, package_id)
 
 
 def add_conflict_to_uninstalls(package_id, order_by):
@@ -294,14 +276,10 @@ def add_conflict_to_uninstalls(package_id, order_by):
     tmp = c.fetchall()
     conflicts = []
     for con in tmp:
-        ii, _ = parse_constraints(constraints, order_by)
-        if con['conflict_package_id'] not in ii:
-            G.add_node(con['conflict_package_id'], conflict=True)
-            all_conflicts.append(con['conflict_package_id'])
+        G.add_node(con['conflict_package_id'])
         G.add_edge(package_id, con['conflict_package_id'])
         if con['conflict_package_id'] not in conflicts:
             conflicts.append(con['conflict_package_id'])
-    uninstalls.extend(conflicts)
     map(lambda x: add_conflict_to_uninstalls(x, order_by), conflicts)
 
 
@@ -356,13 +334,9 @@ for order in order_bys:
     G = nx.DiGraph()
 
     installs, uninstalls = parse_constraints(constraints, order)
-    initial_installs = installs
-    initial_uninstalls = uninstalls
-    installs_no_deps = []
     install_order = []
     install_order_ids = []
     state = []
-    all_conflicts = []
     seen = []
 
     # Setup the state
@@ -394,77 +368,64 @@ for order in order_bys:
     ii, _ = parse_constraints(constraints, order)
     for i in ii:
         # print("Install: " + str(i))
-        G.add_node(i, required=1, opt_dep_group=-1, conflict=False)
-        add_dep_to_installs(i, order)
+        add_dep_to_installs(i, order, None)
 
     solver = Solver()
 
     var_mapping = {}
     node_groups = []
-    trues = []
-    ands = []
 
     cycles = nx.recursive_simple_cycles(G)
     for cycle in cycles:
         G.remove_nodes_from(cycle[1:])
 
     var_groups = {}
+    cnf = []
 
-    for n in G.nodes(data=True):
-        direct_descendants = G[n[0]].keys()
-        nodes = G.nodes(data=True)
+    for n in nx.algorithms.dag.topological_sort(G):
+        direct_descendants = G[n].keys()
+        predecessors = sum(1 for _ in G.predecessors(n))
 
-        if ('conflict' in n[1].keys() and n[1]['conflict'] == False) and ('opt_dep_group' in n[1].keys() and n[1]['opt_dep_group'] == -1):
-            v = Bool(n[0])
+        if predecessors == 0:
+            v = Bool(n)
             solver.add(v)
-            var_mapping[n[0]] = v
+            var_mapping[n] = v
 
         for descendant in direct_descendants:
-            if 'conflict' in nodes[descendant].keys() and nodes[descendant]['conflict'] is True:
+
+            c.execute("SELECT * FROM depends WHERE package_id = %s AND depend_package_id = %s", [n, descendant])
+            descendant_depend_info = c.fetchone()
+            c.execute("SELECT COUNT(conflict_package_id) as c FROM conflicts WHERE conflict_package_id = %s AND package_id = %s", [descendant, n])
+            conflict_count = c.fetchone()['c']
+
+            if conflict_count > 0:
                 v = Bool(descendant)
                 solver.add(Not(v))
                 var_mapping[descendant] = v
-            elif 'opt_dep_group' in nodes[descendant].keys() and nodes[descendant]['opt_dep_group'] != -1:
-                if nodes[descendant]['opt_dep_group'] in var_groups.keys():
+            else:
+                if descendant_depend_info['opt_dep_group'] in var_groups.keys():
                     v = Bool(descendant)
-                    var_groups[nodes[descendant]['opt_dep_group']].append(v)
+                    var_groups[descendant_depend_info['opt_dep_group']].append(v)
                     var_mapping[descendant] = v
                 else:
-                    var_groups[nodes[descendant]['opt_dep_group']] = []
+                    var_groups[descendant_depend_info['opt_dep_group']] = []
                     v = Bool(descendant)
-                    var_groups[nodes[descendant]['opt_dep_group']].append(v)
+                    var_groups[descendant_depend_info['opt_dep_group']].append(v)
                     var_mapping[descendant] = v
-            else:
-                v = Bool(descendant)
-                solver.add(v)
-                var_mapping[descendant] = v
 
     for var_group in var_groups.keys():
         solver.add(Or(var_groups[var_group]))
 
-    #print(solver)
-
-    # print(all_conflicts)
-
-    #nx.draw(G, with_labels=True)
-    #plt.show()
-
-    # print(solver)
+    print(solver)
 
     models = get_models(solver, 100)
 
-    #print(models)
-
-    #print(models)
-
-    # print(m)
+    print(models)
 
     for m in models:
 
         packages_to_install = []
         packages_to_uninstall = []
-
-        packages_to_install.extend(trues)
 
         G_copy = G.copy()
 
@@ -474,18 +435,16 @@ for order in order_bys:
 
         for node in G_copy.nodes(data=True):
             try:
-                if not m[var_mapping[node[0]]] and not node[0] in state_ids:
+                if not m[var_mapping[node[0]]]:
                     G.remove_node(node[0])
             except KeyError:
                 pass
 
-        # nx.draw(G, with_labels=True)
-        # plt.show()
-
         cost = 0
 
+        nodes = G.nodes(data=True)
         for n in nx.algorithms.dag.topological_sort(G.reverse()):
-            if n not in all_conflicts and n not in install_order_ids and n not in state_ids:
+            if n not in install_order_ids and n not in state_ids:
                 c.execute("SELECT name, version, weight FROM packages WHERE id = %s", [n])
                 res = c.fetchone()
                 install_order.append("+" + res['name'] + "=" + res['version'])
@@ -506,7 +465,7 @@ for order in order_bys:
     c.execute(set_for_key_check)
     conn.commit()
 
-#print(costs)
+print(costs)
 smallest_index = costs.index(min(costs))
 print(sols[smallest_index])
 
