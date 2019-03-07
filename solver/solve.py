@@ -5,7 +5,6 @@ from operator import *
 import networkx as nx
 import pymysql.cursors
 from packaging import version as vparser
-from z3 import Solver, Bool, Not, Or, And, unsat, unknown, Z3Exception, sat
 import pycosat
 import matplotlib.pyplot as plt
 
@@ -282,23 +281,6 @@ def add_conflict_to_uninstalls(package_id, order_by):
             conflicts.append(con['conflict_package_id'])
     map(lambda x: add_conflict_to_uninstalls(x, order_by), conflicts)
 
-
-# Return the first "M" models of formula list of formulas F
-# Copied from here: https://stackoverflow.com/questions/11867611/z3py-checking-all-solutions-for-equation
-def get_models(s, M):
-    result = []
-    while len(result) < M and s.check() != unsat:
-        m = s.model()
-        result.append(m)
-        # Create a new constraint the blocks the current model
-        block = []
-        for d in m:
-            # create a constant from declaration
-            c = d()
-            block.append(c != m[d])
-        s.add(Or(block))
-    return result
-
 conn = make_conn()
 
 c = conn.cursor()
@@ -370,8 +352,6 @@ for order in order_bys:
         # print("Install: " + str(i))
         add_dep_to_installs(i, order, None)
 
-    solver = Solver()
-
     var_mapping = {}
     node_groups = []
 
@@ -387,9 +367,7 @@ for order in order_bys:
         predecessors = sum(1 for _ in G.predecessors(n))
 
         if predecessors == 0:
-            v = Bool(n)
-            solver.add(v)
-            var_mapping[n] = v
+            cnf.append([n])
 
         for descendant in direct_descendants:
 
@@ -399,58 +377,41 @@ for order in order_bys:
             conflict_count = c.fetchone()['c']
 
             if conflict_count > 0:
-                v = Bool(descendant)
-                solver.add(Not(v))
-                var_mapping[descendant] = v
+                cnf.append([-descendant])
             else:
                 if descendant_depend_info['opt_dep_group'] in var_groups.keys():
-                    v = Bool(descendant)
-                    var_groups[descendant_depend_info['opt_dep_group']].append(v)
-                    var_mapping[descendant] = v
+                    var_groups[descendant_depend_info['opt_dep_group']].append(descendant)
                 else:
                     var_groups[descendant_depend_info['opt_dep_group']] = []
-                    v = Bool(descendant)
-                    var_groups[descendant_depend_info['opt_dep_group']].append(v)
-                    var_mapping[descendant] = v
+                    var_groups[descendant_depend_info['opt_dep_group']].append(descendant)
 
     for var_group in var_groups.keys():
-        solver.add(Or(var_groups[var_group]))
+        cnf.append(var_groups[var_group])
 
-    print(solver)
-
-    models = get_models(solver, 100)
-
-    print(models)
-
-    for m in models:
+    for m in pycosat.itersolve(cnf, prop_limit=1000):
+        #print(m)
 
         packages_to_install = []
         packages_to_uninstall = []
-
-        G_copy = G.copy()
 
         c.execute("SELECT package_id FROM state")
         res = c.fetchall()
         state_ids = list(map(lambda x: x['package_id'], res))
 
-        for node in G_copy.nodes(data=True):
-            try:
-                if not m[var_mapping[node[0]]]:
-                    G.remove_node(node[0])
-            except KeyError:
-                pass
-
         cost = 0
+
+        installs_this_time = []
 
         nodes = G.nodes(data=True)
         for n in nx.algorithms.dag.topological_sort(G.reverse()):
-            if n not in install_order_ids and n not in state_ids:
+            if n not in install_order_ids and n not in state_ids and n in m:
                 c.execute("SELECT name, version, weight FROM packages WHERE id = %s", [n])
                 res = c.fetchone()
                 install_order.append("+" + res['name'] + "=" + res['version'])
                 install_order_ids.append(n)
+                installs_this_time.append(n)
                 cost += res['weight']
-            elif n in state_ids or n in install_order_ids:
+            elif (n in state_ids or n in install_order_ids or -n in m) and n in installs_this_time:
                 # Only uninstall if its in the state, or it's already been installed
                 c.execute("SELECT name, version FROM packages WHERE id = %s", [n])
                 res = c.fetchone()
@@ -465,7 +426,6 @@ for order in order_bys:
     c.execute(set_for_key_check)
     conn.commit()
 
-print(costs)
 smallest_index = costs.index(min(costs))
 print(sols[smallest_index])
 

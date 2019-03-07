@@ -6,4 +6,4 @@ apt update
 apt install python3-pip -y
 apt install mariadb-server mariadb-client -y
 service mysql start
-pip3 install --user networkx packaging matplotlib pymysql
+pip3 install --user networkx packaging matplotlib pymysql pycosat
