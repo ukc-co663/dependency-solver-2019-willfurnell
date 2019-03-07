@@ -413,17 +413,12 @@ for order in order_bys:
     for n in G.nodes(data=True):
         direct_descendants = G[n[0]].keys()
         nodes = G.nodes(data=True)
-        node_descendant = []
-        if n[0] not in var_mapping.keys() and 'conflict' not in nodes[n[0]].keys() and nodes[n[0]]['conflict'] is False:
-            v = Bool(n[0])
-            solver.add(True)
-            var_mapping[n[0]] = True
         for descendant in direct_descendants:
             if 'conflict' in nodes[descendant].keys() and nodes[descendant]['conflict'] is True:
                 v = Bool(descendant)
                 solver.add(Not(v))
                 var_mapping[descendant] = v
-            else:
+            elif 'opt_dep_group' in nodes[descendant].keys() and nodes[descendant]['opt_dep_group'] != -1:
                 if nodes[descendant]['opt_dep_group'] in var_groups.keys():
                     v = Bool(descendant)
                     var_groups[nodes[descendant]['opt_dep_group']].append(v)
@@ -433,6 +428,10 @@ for order in order_bys:
                     v = Bool(descendant)
                     var_groups[nodes[descendant]['opt_dep_group']].append(v)
                     var_mapping[descendant] = v
+            else:
+                v = Bool(descendant)
+                solver.add(v)
+                var_mapping[descendant] = v
 
     for var_group in var_groups.keys():
         solver.add(Or(var_groups[var_group]))
