@@ -5,7 +5,7 @@ from operator import *
 import networkx as nx
 import pymysql.cursors
 from packaging import version as vparser
-import pycosat
+from pysat.solvers import Glucose4, Glucose3, Minisat22 # standard way to import the library
 import matplotlib.pyplot as plt
 from judge import is_valid_state, BadStateException
 
@@ -356,9 +356,9 @@ for order in order_bys:
     var_mapping = {}
     node_groups = []
 
-    cycles = nx.recursive_simple_cycles(G)
-    for cycle in cycles:
-        G.remove_nodes_from(cycle[1:])
+    #cycles = nx.recursive_simple_cycles(G)
+    #for cycle in cycles:
+    #    G.remove_nodes_from(cycle[1:])
 
     var_groups = {}
     cnf = []
@@ -374,11 +374,11 @@ for order in order_bys:
 
             c.execute("SELECT * FROM depends WHERE package_id = %s AND depend_package_id = %s", [n, descendant])
             descendant_depend_info = c.fetchone()
-            c.execute("SELECT COUNT(conflict_package_id) as c FROM conflicts WHERE conflict_package_id = %s AND package_id = %s", [descendant, n])
-            conflict_count = c.fetchone()['c']
+            c.execute("SELECT conflict_package_id, package_id FROM conflicts WHERE conflict_package_id = %s AND package_id = %s", [descendant, n])
+            conflicts = c.fetchall()
 
-            if conflict_count > 0:
-                cnf.append([-descendant])
+            if conflicts:
+                cnf.append([n, -descendant])
             else:
                 if descendant_depend_info['opt_dep_group'] in var_groups.keys():
                     var_groups[descendant_depend_info['opt_dep_group']].append(descendant)
@@ -389,8 +389,11 @@ for order in order_bys:
     for var_group in var_groups.keys():
         cnf.append(var_groups[var_group])
 
-    for m in pycosat.itersolve(cnf, prop_limit=1000):
-        #print(m)
+    print(cnf)
+    s = Glucose4()
+    s.append_formula(cnf)
+    for m in s.enum_models():
+        print(m)
 
         packages_to_install = []
         packages_to_uninstall = []
@@ -427,7 +430,6 @@ for order in order_bys:
                 sols.append(json.dumps(install_order))
                 costs.append(cost)
         except BadStateException:
-            print("bse raised")
             pass # If it's a bad state, we don't want to add it!
     c.execute(unset_for_key_check)
     c.execute(del_everything_except_pkg)
