@@ -7,6 +7,7 @@ import pymysql.cursors
 from packaging import version as vparser
 import pycosat
 import matplotlib.pyplot as plt
+from judge import is_valid_state, BadStateException
 
 no_sql_notes = "SET sql_notes = 0"
 if sys.platform == "darwin":
@@ -401,6 +402,7 @@ for order in order_bys:
         cost = 0
 
         installs_this_time = []
+        uninstalls_this_time = []
 
         nodes = G.nodes(data=True)
         for n in nx.algorithms.dag.topological_sort(G.reverse()):
@@ -417,10 +419,16 @@ for order in order_bys:
                 res = c.fetchone()
                 install_order.append("-" + res['name'] + "=" + res['version'])
                 install_order_ids.append(n)
+                uninstalls_this_time.append(n)
                 cost += 10 ** 6
 
-        sols.append(json.dumps(install_order))
-        costs.append(cost)
+        try:
+            if is_valid_state(install_order, constraints, initial, repository):
+                sols.append(json.dumps(install_order))
+                costs.append(cost)
+        except BadStateException:
+            print("bse raised")
+            pass # If it's a bad state, we don't want to add it!
     c.execute(unset_for_key_check)
     c.execute(del_everything_except_pkg)
     c.execute(set_for_key_check)
