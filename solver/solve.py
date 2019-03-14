@@ -6,6 +6,7 @@ import networkx as nx
 import pymysql.cursors
 from packaging import version as vparser
 from pysat.solvers import Glucose4, Glucose3, Minisat22 # standard way to import the library
+from pysat.formula import CNF
 import matplotlib.pyplot as plt
 from judge import is_valid_state, BadStateException
 
@@ -356,19 +357,22 @@ for order in order_bys:
     var_mapping = {}
     node_groups = []
 
-    #cycles = nx.recursive_simple_cycles(G)
-    #for cycle in cycles:
-    #    G.remove_nodes_from(cycle[1:])
+    cycles = nx.recursive_simple_cycles(G)
+    for cycle in cycles:
+        G.remove_nodes_from(cycle[1:])
 
-    var_groups = {}
     cnf = []
-
+    s = Glucose4()
     for n in nx.algorithms.dag.topological_sort(G):
         direct_descendants = G[n].keys()
         predecessors = sum(1 for _ in G.predecessors(n))
 
+        var_groups = {}
+
+        formula = []
+
         if predecessors == 0:
-            cnf.append([n])
+            formula.append([n])
 
         for descendant in direct_descendants:
 
@@ -378,7 +382,8 @@ for order in order_bys:
             conflicts = c.fetchall()
 
             if conflicts:
-                cnf.append([n, -descendant])
+                formula.append([-descendant])
+                pass
             else:
                 if descendant_depend_info['opt_dep_group'] in var_groups.keys():
                     var_groups[descendant_depend_info['opt_dep_group']].append(descendant)
@@ -386,12 +391,14 @@ for order in order_bys:
                     var_groups[descendant_depend_info['opt_dep_group']] = []
                     var_groups[descendant_depend_info['opt_dep_group']].append(descendant)
 
-    for var_group in var_groups.keys():
-        cnf.append(var_groups[var_group])
+            for var_group in var_groups.keys():
+                formula.append(var_groups[var_group])
 
-    print(cnf)
-    s = Glucose4()
-    s.append_formula(cnf)
+            s.append_formula(formula)
+
+    #print(cnf)
+    #s.append_formula(cnf)
+    iterations = 0
     for m in s.enum_models():
         print(m)
 
@@ -431,6 +438,11 @@ for order in order_bys:
                 costs.append(cost)
         except BadStateException:
             pass # If it's a bad state, we don't want to add it!
+
+        # Don't go on for too long
+        iterations += 1
+        if iterations > 1000:
+            break
     c.execute(unset_for_key_check)
     c.execute(del_everything_except_pkg)
     c.execute(set_for_key_check)
